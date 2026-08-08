@@ -1,0 +1,18 @@
+{
+  "nodes": [
+    {
+      "id": "forest_entry",
+      "worldPosition": [0, 0, 0],
+      "neighbors": ["clearing"],
+      "ambientAssetIds": ["ambient.forest-wind"],
+      "eventAssetIds": ["event.leaves"]
+    },
+    {
+      "id": "clearing",
+      "worldPosition": [0, 0, -6],
+      "neighbors": ["forest_entry"],
+      "ambientAssetIds": ["ambient.forest-wind"],
+      "eventAssetIds": ["event.bird"]
+    }
+  ]
+}

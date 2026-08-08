@@ -1,0 +1,258 @@
+import type {
+  EventPlanItem,
+  EventState,
+  ListenerState,
+  TransitionPolicy,
+  Vector3,
+} from '@neuroscape/contracts';
+import {
+  EPSILON,
+  gentleDistanceGain,
+  lerpVector,
+  scaleVector,
+  smoothstep,
+  smoothstepDerivative,
+  subtractVector,
+} from '../core/math.js';
+import type { RuntimeEventBus } from '../events/RuntimeEvents.js';
+import type { SemanticLocationMapper } from '../scene-graph/SemanticLocationMapper.js';
+import type { TransitionController } from './TransitionController.js';
+
+interface NumericTrajectoryWaypoint {
+  position: Vector3;
+  timestampMs: number;
+}
+
+interface EventRuntimeObject {
+  id: string;
+  assetId: string;
+  activationTimeMs: number;
+  durationMs: number;
+  baseGain: number;
+  trajectory: NumericTrajectoryWaypoint[];
+  worldPosition: Vector3;
+  velocity: Vector3;
+  lifecycle: 'waiting' | 'active' | 'finished';
+  transitionKey: string;
+  removalScheduled: boolean;
+  finishedPublished: boolean;
+  replacement?: EventPlanItem;
+}
+
+export class EventController {
+  readonly #objects = new Map<string, EventRuntimeObject>();
+  #policy: TransitionPolicy = { defaultDurationMs: 1, curve: 'linear' };
+  #timestampMs = 0;
+
+  constructor(
+    private readonly locationMapper: SemanticLocationMapper,
+    private readonly transitions: TransitionController,
+    private readonly events: RuntimeEventBus,
+  ) {}
+
+  initialize(items: readonly EventPlanItem[], policy: TransitionPolicy, timestampMs = 0): void {
+    this.#objects.clear();
+    this.#policy = policy;
+    this.#timestampMs = timestampMs;
+    items.forEach((item) => this.create(item));
+  }
+
+  merge(items: readonly EventPlanItem[], policy: TransitionPolicy): void {
+    this.#policy = policy;
+    const incoming = new Map(items.map((item) => [item.id, item]));
+    for (const object of this.#objects.values()) {
+      const item = incoming.get(object.id);
+      if (!item) {
+        this.beginRemoval(object);
+        continue;
+      }
+      incoming.delete(item.id);
+      if (object.assetId !== item.assetId) {
+        object.replacement = item;
+        this.beginRemoval(object);
+        continue;
+      }
+      this.mergeCompatible(object, item);
+    }
+    incoming.forEach((item) => this.create(item));
+  }
+
+  update(deltaTimeMs: number, _listener: ListenerState): void {
+    this.#timestampMs += deltaTimeMs;
+    for (const [id, object] of this.#objects) {
+      if (object.lifecycle === 'finished') {
+        if (object.finishedPublished) {
+          this.#objects.delete(id);
+          this.transitions.release(object.transitionKey);
+          if (object.replacement) this.create(object.replacement);
+        }
+        continue;
+      }
+
+      if (object.removalScheduled && this.transitions.isComplete(object.transitionKey)) {
+        object.lifecycle = 'finished';
+        object.velocity = [0, 0, 0];
+        object.finishedPublished = true;
+        this.events.emit({ type: 'EventFinished', timestampMs: this.#timestampMs, eventId: object.id });
+        continue;
+      }
+
+      if (object.lifecycle === 'waiting' && this.#timestampMs >= object.activationTimeMs) {
+        object.lifecycle = 'active';
+        this.events.emit({ type: 'EventSpawned', timestampMs: this.#timestampMs, eventId: object.id });
+        this.transitions.scheduleActivation(
+          object.transitionKey,
+          object.baseGain,
+          this.fadeDuration(object),
+          this.#policy.curve,
+        );
+      }
+
+      if (object.lifecycle !== 'active') continue;
+      const sample = sampleTrajectory(object.trajectory, this.#timestampMs);
+      object.worldPosition = sample.position;
+      object.velocity = sample.velocity;
+
+      const endTimeMs = object.activationTimeMs + object.durationMs;
+      const fadeDurationMs = this.fadeDuration(object);
+      if (!object.removalScheduled && this.#timestampMs >= endTimeMs - fadeDurationMs) {
+        const remainingMs = Math.max(0, endTimeMs - this.#timestampMs);
+        object.removalScheduled = true;
+        this.transitions.scheduleRemoval(
+          object.transitionKey,
+          this.transitions.getValue(object.transitionKey, 0),
+          remainingMs,
+          this.#policy.curve,
+        );
+      }
+
+    }
+  }
+
+  getStates(listener: ListenerState): EventState[] {
+    return [...this.#objects.values()].map((object) => {
+      const gain =
+        this.transitions.getValue(object.transitionKey, 0) *
+        gentleDistanceGain(
+          Math.hypot(
+            object.worldPosition[0] - listener.worldPosition[0],
+            object.worldPosition[1] - listener.worldPosition[1],
+            object.worldPosition[2] - listener.worldPosition[2],
+          ),
+        );
+      return {
+        id: object.id,
+        assetId: object.assetId,
+        worldPosition: [...object.worldPosition],
+        velocity: [...object.velocity],
+        gain,
+        lifecycle: object.lifecycle,
+        active: object.lifecycle === 'active' && gain > EPSILON,
+      };
+    });
+  }
+
+  get size(): number {
+    return this.#objects.size;
+  }
+
+  reset(): void {
+    this.#objects.clear();
+    this.#timestampMs = 0;
+  }
+
+  private create(item: EventPlanItem): void {
+    const trajectory = this.resolveTrajectory(item);
+    const firstPosition = trajectory[0]?.position;
+    if (!firstPosition) throw new Error(`Event ${item.id} requires a trajectory.`);
+    this.#objects.set(item.id, {
+      id: item.id,
+      assetId: item.assetId,
+      activationTimeMs: item.activationTimeMs,
+      durationMs: item.durationMs,
+      baseGain: item.gain,
+      trajectory,
+      worldPosition: [...firstPosition],
+      velocity: [0, 0, 0],
+      lifecycle: 'waiting',
+      transitionKey: `event:${item.id}:gain`,
+      removalScheduled: false,
+      finishedPublished: false,
+    });
+  }
+
+  private mergeCompatible(object: EventRuntimeObject, item: EventPlanItem): void {
+    object.baseGain = item.gain;
+    object.activationTimeMs = item.activationTimeMs;
+    object.durationMs = item.durationMs;
+    object.replacement = undefined;
+    if (object.lifecycle === 'active') {
+      const future = this.resolveTrajectory(item).filter(
+        (waypoint) => waypoint.timestampMs > this.#timestampMs,
+      );
+      object.trajectory = [
+        { position: [...object.worldPosition], timestampMs: this.#timestampMs },
+        ...future,
+      ];
+      this.transitions.scheduleGain(
+        object.transitionKey,
+        this.transitions.getValue(object.transitionKey, 0),
+        item.gain,
+        this.#policy.defaultDurationMs,
+        this.#policy.curve,
+      );
+    } else if (object.lifecycle === 'waiting') {
+      object.trajectory = this.resolveTrajectory(item);
+    }
+  }
+
+  private beginRemoval(object: EventRuntimeObject): void {
+    if (object.removalScheduled) return;
+    object.removalScheduled = true;
+    this.transitions.scheduleRemoval(
+      object.transitionKey,
+      this.transitions.getValue(object.transitionKey, 0),
+      this.fadeDuration(object),
+      this.#policy.curve,
+    );
+  }
+
+  private resolveTrajectory(item: EventPlanItem): NumericTrajectoryWaypoint[] {
+    return item.trajectory.map((waypoint) => ({
+      position: this.locationMapper.resolve(waypoint.locationId),
+      timestampMs: waypoint.timestampMs,
+    }));
+  }
+
+  private fadeDuration(object: EventRuntimeObject): number {
+    return Math.min(this.#policy.defaultDurationMs, object.durationMs / 2);
+  }
+}
+
+function sampleTrajectory(
+  trajectory: readonly NumericTrajectoryWaypoint[],
+  timestampMs: number,
+): { position: Vector3; velocity: Vector3 } {
+  const first = trajectory[0];
+  if (!first) return { position: [0, 0, 0], velocity: [0, 0, 0] };
+  if (timestampMs <= first.timestampMs) {
+    return { position: [...first.position], velocity: [0, 0, 0] };
+  }
+  for (let index = 0; index < trajectory.length - 1; index += 1) {
+    const from = trajectory[index]!;
+    const to = trajectory[index + 1]!;
+    if (timestampMs <= to.timestampMs) {
+      const durationMs = Math.max(1, to.timestampMs - from.timestampMs);
+      const progress = Math.max(0, Math.min(1, (timestampMs - from.timestampMs) / durationMs));
+      const delta = subtractVector(to.position, from.position);
+      return {
+        position: lerpVector(from.position, to.position, smoothstep(progress)),
+        velocity: scaleVector(delta, (smoothstepDerivative(progress) / durationMs) * 1000),
+      };
+    }
+  }
+  return {
+    position: [...trajectory[trajectory.length - 1]!.position],
+    velocity: [0, 0, 0],
+  };
+}

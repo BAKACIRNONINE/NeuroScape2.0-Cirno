@@ -1,0 +1,1282 @@
+﻿<script>
+/* V3: NeuroScape */
+const V3NS = (() => {
+  /* Scene data */
+  const SOUNDS = {
+    ambient: ['Forest Wind Bed','Rain Ambience','Low Forest Hum','Morning Mist'],
+    event:   ['Distant Bird Call','Leaves Rustling','Wind Gust','Branch Creak'],
+    action:  ['Grass Footsteps','Soft Breathing','Fabric Rustle'],
+  };
+  const ACTIVE = [
+    {ambient:[0],    event:[],       action:[0]   },
+    {ambient:[0,2],  event:[0,2],    action:[0]   },
+    {ambient:[0,1,2],event:[0,1,2,3],action:[0,1] },
+    {ambient:[0,2],  event:[0,1],    action:[0,1] },
+  ];
+  const PHASES    = ['settling','immersion','adaptive_shift','integration'];
+  const DENSITIES = ['low','low','medium','low'];
+  let eegStepSec = Number('{{ eeg_step_sec or 10 }}') || 10;
+  const GUIDANCE  = [
+    'Now, imagine yourself in a rainforest.',
+    'Notice your breath while soft forest air surrounds you.',
+    'Let the gentle sounds guide you deeper into stillness.',
+    'Feel the ground beneath you. You are safe here.',
+  ];
+  const RECS = [
+    'The spatial experience will be updated after the first 30 seconds, based on your measured mental states.',
+    'if anxiety ->\n  reduce event density\n  increase low-frequency ambient\n\nif attention ->\n  add spatial movement\n  introduce directional cues',
+    'Anxiety decreasing. Stability improving.\n  maintain gentle event layer\n  allow richer spatial movement',
+    'System entering closing phase.\n  reduce density\n  fade event sounds\n  keep ambient soft',
+  ];
+  const FALLBACK_BY_CAT = {
+    ambient: SOUNDS.ambient,
+    event: SOUNDS.event,
+    action: SOUNDS.action,
+  };
+  const SCENE_VISUALS = {
+    forest: {
+      img:'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&fit=crop&w=2400&q=90',
+      accent:'154,139,238', orbA:'190,255,205', orbB:'120,224,255',
+    },
+    ocean: {
+      img:'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=2400&q=90',
+      accent:'76,170,255', orbA:'130,235,255', orbB:'80,150,255',
+    },
+    beach: {
+      img:'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=2400&q=90',
+      accent:'80,190,230', orbA:'150,245,255', orbB:'255,220,140',
+    },
+    rain: {
+      img:'https://images.unsplash.com/photo-1519692933481-e162a57d6721?auto=format&fit=crop&w=2400&q=90',
+      accent:'125,150,255', orbA:'170,210,255', orbB:'130,170,255',
+    },
+    mountain: {
+      img:'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=2400&q=90',
+      accent:'150,190,230', orbA:'210,240,255', orbB:'130,180,235',
+    },
+    snow: {
+      img:'https://images.unsplash.com/photo-1483664852095-d6cc6870702d?auto=format&fit=crop&w=2400&q=90',
+      accent:'170,210,255', orbA:'235,250,255', orbB:'160,210,255',
+    },
+    city: {
+      img:'https://images.unsplash.com/photo-1449824913935-59a10b8d2000?auto=format&fit=crop&w=2400&q=90',
+      accent:'255,165,110', orbA:'255,190,120', orbB:'180,150,255',
+    },
+    desert: {
+      img:'https://images.unsplash.com/photo-1509316975850-ff9c5deb0cd9?auto=format&fit=crop&w=2400&q=90',
+      accent:'255,185,110', orbA:'255,225,150', orbB:'255,150,100',
+    },
+    default: {
+      img:'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&fit=crop&w=2400&q=90',
+      accent:'154,139,238', orbA:'190,255,205', orbB:'120,224,255',
+    },
+  };
+
+  /* Spatial sources */
+  const SRCS = [
+    {color:'rgba(130,200,130,.85)', angle:45,  dist:.72, vA:.008, vD:-.001, on:false},
+    {color:'rgba(100,180,210,.85)', angle:200, dist:.52, vA:-.006,vD:.002,  on:false},
+    {color:'rgba(210,180,100,.75)', angle:315, dist:.85, vA:.004, vD:-.003, on:false},
+  ];
+  const REAL_COLORS = [
+    'rgba(130,200,130,.88)',
+    'rgba(100,180,210,.88)',
+    'rgba(210,180,100,.84)',
+    'rgba(190,145,230,.84)',
+    'rgba(240,150,130,.82)',
+  ];
+  const v3Trails = {};
+  const v3MotionSeed = {};
+
+  /* State */
+  let sec=0, phaseIdx=0, playing=false;
+  let timerInt=null, mapRAF=null, waveRAF=null;
+  let stepInFlight=false;
+  let pendingEEGSteps=0;
+  let eegSampleInFlight=false;
+  let endingSession=false;
+  let lastEEGStep=0;
+  let eegMode='{{ eeg_mode or "realtime" }}';
+  let userPrompt='';
+  let hasRealEEG=false;
+  let v3Bands={alpha:0,beta:0,theta:0,delta:0,gamma:0};
+  let v3TargetBands={alpha:0,beta:0,theta:0,delta:0,gamma:0};
+  let v3Scores={relaxation:0,attention:0,stability:0};
+  let v3TargetScores={relaxation:0,attention:0,stability:0};
+  let v3BandHistory=[];
+  let eegPlaybackSamples=[];
+  let eegSamplesLoading=false;
+  let sessionStartMs=0;
+  let lastRealtimeSamplePoll=0;
+  let lastPlaybackHistoryAt=-1;
+  let meditationDurationSec=600;
+  let eegTimerStarted=false;
+  let eegStartedNoticeSent=false;
+  let latestMental=null;
+  let latestPreviousMental=null;
+  let latestRecItem=null;
+  let latestWindowMental=null;
+  let scenePollInFlight=false;
+
+  /* Navigation */
+  function goTo(page) {
+    if (mapRAF)  { cancelAnimationFrame(mapRAF);  mapRAF=null;  }
+    if (waveRAF) { cancelAnimationFrame(waveRAF); waveRAF=null; }
+    document.querySelectorAll('.v3-page').forEach(el=>el.classList.remove('v3-active'));
+    const el = document.getElementById('v3-'+page);
+    if (el) el.classList.add('v3-active');
+    if (page==='session') initSession();
+  }
+  function setMode(mode) {
+    eegMode = mode === 'realtime' ? 'realtime' : 'recorded';
+    document.querySelectorAll('[data-v3-mode]').forEach(btn=>{
+      btn.classList.toggle('on', btn.dataset.v3Mode === eegMode);
+    });
+  }
+
+  /* Home submit */
+  async function submit() {
+    const inp = document.getElementById('v3-prompt');
+    const durationInput = document.getElementById('v3-duration-minutes');
+    userPrompt = inp&&inp.value.trim() ? inp.value.trim() : 'I want a forest scene to get relaxed...';
+    const requestedMinutes=Number(durationInput?.value);
+    const durationMinutes=Number.isFinite(requestedMinutes)
+      ? Math.max(1,Math.min(180,requestedMinutes))
+      : 10;
+    if (durationInput) durationInput.value=String(Math.round(durationMinutes));
+    meditationDurationSec=Math.round(durationMinutes*60);
+    goTo('loading');
+    let ok = false;
+    try {
+      const r = await fetch('/api/bootstrap', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({prompt:userPrompt, eeg_mode:eegMode, duration_minutes:durationMinutes})
+      });
+      const d = await r.json();
+      if (r.ok) {
+        applyState(d);
+        V2.payload = null;
+        V2.history = [];
+        V2.idx = -1;
+        V2.total = Number(d.total_windows) || 0;
+        eegStepSec = Number(d.eeg_step_sec) || eegStepSec;
+        meditationDurationSec = Number(d.meditation_duration_sec) || meditationDurationSec;
+        hasRealEEG = false;
+        v3Bands = {alpha:0,beta:0,theta:0,delta:0,gamma:0};
+        v3TargetBands = {alpha:0,beta:0,theta:0,delta:0,gamma:0};
+        v3Scores = {relaxation:0,attention:0,stability:0};
+        v3TargetScores = {relaxation:0,attention:0,stability:0};
+        v3BandHistory = [];
+        eegPlaybackSamples = [];
+        latestMental = null;
+        latestPreviousMental = null;
+        latestRecItem = null;
+        latestWindowMental = null;
+        phaseIdx = 0;
+        refreshScene();
+        ok = true;
+      } else {
+        throw new Error(d.error || `Bootstrap failed with ${r.status}`);
+      }
+    } catch(e) {
+      console.error('V3 bootstrap failed', e);
+      alert(`Scene generation failed: ${e.message || e}`);
+      goTo('home');
+      return;
+    }
+    setTimeout(()=>{
+      refreshScene();
+      if (ok) goTo('session');
+    }, 650);
+  }
+
+  /* Session init */
+  function initSession() {
+    sec=0; phaseIdx=0; playing=true;
+    lastEEGStep=0;
+    endingSession=false;
+    sessionStartMs=0;
+    eegTimerStarted=false;
+    eegStartedNoticeSent=false;
+    lastPlaybackHistoryAt=-1;
+    latestRecItem = V2.idx >= 0 && Array.isArray(V2.history) && V2.history.length ? V2.history[V2.history.length-1] : null;
+    latestWindowMental = latestRecItem;
+    clearInterval(timerInt);
+    renderTimer();
+    refreshScene();
+    if (!V2.payload) hasRealEEG=false;
+    renderEEGWaiting();
+    loadEEGPlaybackSamples();
+    if (eegMode === 'realtime') refreshEEGSample();
+    renderGuidance(0); renderRec(0);
+    if (latestWindowMental) renderMentalFromWindowOutput(latestWindowMental);
+    updateSrcs(0);
+    startTimer(); scheduleMap(); scheduleWave();
+    animateV3UI();
+    processEEGStep();
+  }
+  function animateV3UI() {
+    if (!window.anime) return;
+    anime.remove('#v3-session .v3-panel, #v3-session .v3-center-card, #v3-session .v3-footer');
+    anime({
+      targets:'#v3-session .v3-panel, #v3-session .v3-center-card, #v3-session .v3-footer',
+      opacity:[0,1],
+      translateY:[14,0],
+      delay:anime.stagger(55),
+      duration:760,
+      easing:'easeOutCubic',
+    });
+  }
+
+  /* Timer */
+  function renderTimer() {
+    const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+    const el=document.getElementById('v3-timer');
+    if (el) el.textContent=`${p2(h)}:${p2(m)}:${p2(s)}`;
+    const meta=document.getElementById('v3-timer-meta');
+    if (!meta) return;
+    const targetMinutes=Math.round(meditationDurationSec/60);
+    if (!eegTimerStarted) {
+      meta.textContent=`Waiting for EEG · ${targetMinutes} min target`;
+      return;
+    }
+    const remaining=Math.max(0,meditationDurationSec-sec);
+    meta.textContent=`EEG meditation time · ${formatClock(remaining)} remaining`;
+  }
+  function formatClock(totalSec) {
+    const total=Math.max(0,Math.round(totalSec));
+    const h=Math.floor(total/3600), m=Math.floor((total%3600)/60), s=total%60;
+    return h ? `${h}:${p2(m)}:${p2(s)}` : `${p2(m)}:${p2(s)}`;
+  }
+  function markEEGReceived() {
+    if (eegTimerStarted || endingSession) return;
+    eegTimerStarted=true;
+    sessionStartMs=performance.now();
+    sec=0;
+    renderTimer();
+    if (!eegStartedNoticeSent) {
+      eegStartedNoticeSent=true;
+      fetch('/api/eeg_started', {method:'POST'}).catch(e=>{
+        console.warn('Could not record EEG timer start', e);
+      });
+    }
+  }
+  function startTimer() {
+    timerInt = setInterval(()=>{
+      if (!playing) return;
+      if (eegTimerStarted && sessionStartMs) {
+        sec=Math.max(0,Math.floor((performance.now()-sessionStartMs)/1000));
+      }
+      renderTimer();
+      if (eegMode === 'realtime') refreshEEGSample();
+      if (!eegTimerStarted) return;
+      if (sec >= meditationDurationSec) {
+        finishSessionAndRedirect('duration_complete');
+        return;
+      }
+      const eegStep=Math.floor(sec/eegStepSec);
+      const ni=syncPhaseFromSession();
+      if (ni!==phaseIdx) {
+        phaseIdx=ni;
+        refreshScene();
+        renderGuidance(ni); renderRec(ni);
+        updateSrcs(ni);
+      }
+      if (eegStep!==lastEEGStep) {
+        lastEEGStep=eegStep;
+        processEEGStep();
+      }
+    },1000);
+  }
+  function p2(n){return String(n).padStart(2,'0');}
+  function dataDrivenPhaseIdx() {
+    if (eegMode !== 'recorded' || !V2.total || V2.idx < 0) return phaseIdx;
+    const progress = Math.max(0, Math.min(1, (V2.idx + 1) / V2.total));
+    if (progress >= .9) return 3;
+    if (progress >= .6) return 2;
+    if (progress >= .3) return 1;
+    return 0;
+  }
+  function syncPhaseFromSession() {
+    const eegStep=Math.floor(sec/eegStepSec);
+    return eegMode === 'recorded' ? dataDrivenPhaseIdx() : Math.min(3,eegStep);
+  }
+
+  async function togglePlay() {
+    await finishSessionAndRedirect('manual');
+  }
+
+  async function finishSessionAndRedirect(endReason='manual') {
+    if (endingSession) return;
+    endingSession=true;
+    playing=false;
+    clearInterval(timerInt);
+    const btn=document.getElementById('v3-pp');
+    if (btn) btn.textContent='...';
+    try {
+      await fetch('/api/end_session', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          elapsed_sec:sec,
+          end_reason:endReason,
+          meditation_duration_sec:meditationDurationSec
+        })
+      });
+    } catch(e) {
+      console.warn('V3 end session failed before summary redirect', e);
+    } finally {
+      window.location.assign('/summary');
+    }
+  }
+
+  async function processEEGStep() {
+    if (endingSession) return;
+    if (stepInFlight) {
+      pendingEEGSteps++;
+      return;
+    }
+    stepInFlight=true;
+    try {
+      const r=await fetch('/api/step', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({direction:'next', elapsed_sec:sec})
+      });
+      const d=await r.json();
+      if (r.ok) {
+        if (d.done && eegMode === 'recorded') {
+          await finishSessionAndRedirect();
+          return;
+        }
+        if (d.error && !d.current_payload) {
+          sEl('v3-rec', eegMode === 'realtime'
+            ? 'Waiting for realtime Muse EEG window...\nKeep Muse OSC streaming; the scene will update when a live window arrives.'
+            : d.error);
+          return;
+        }
+        applyState(d);
+        phaseIdx=syncPhaseFromSession();
+        if (eegMode === 'realtime') renderFromPayload(d.current_payload);
+        const latest=(d.mental_history||[]).slice(-1)[0];
+        if (latest) {
+          latestWindowMental=latest;
+          latestRecItem=latest;
+          renderRecFromMental(latest);
+          renderMentalFromWindowOutput(latest);
+        }
+        refreshScene();
+        pollSceneAdaptation(d.adaptation_pending);
+      }
+    } catch(e) {
+      console.warn('V3 EEG step failed', e);
+    } finally {
+      stepInFlight=false;
+      if (pendingEEGSteps > 0 && playing && !endingSession) {
+        pendingEEGSteps--;
+        setTimeout(processEEGStep, 0);
+      }
+    }
+  }
+
+  async function refreshEEGSample() {
+    if (eegSampleInFlight || endingSession) return;
+    const now=performance.now();
+    if (now-lastRealtimeSamplePoll < 250) return;
+    lastRealtimeSamplePoll=now;
+    eegSampleInFlight=true;
+    try {
+      const r=await fetch(`/api/eeg_sample?elapsed_sec=${encodeURIComponent(sec)}`, {cache:'no-store'});
+      if (!r.ok) return;
+      const sample=await r.json();
+      renderFromPayload(sample);
+    } catch(e) {
+      console.warn('V3 EEG sample refresh failed', e);
+    } finally {
+      eegSampleInFlight=false;
+    }
+  }
+
+  async function loadEEGPlaybackSamples() {
+    if (eegMode !== 'recorded' || eegSamplesLoading || eegPlaybackSamples.length) return;
+    eegSamplesLoading=true;
+    try {
+      const r=await fetch('/api/eeg_samples', {cache:'no-store'});
+      if (!r.ok) return;
+      const d=await r.json();
+      eegPlaybackSamples=Array.isArray(d.samples) ? d.samples : [];
+      if (eegPlaybackSamples.length) renderFromPayload(eegPlaybackSamples[0], {recordHistory:false, immediate:true});
+    } catch(e) {
+      console.warn('V3 EEG playback preload failed', e);
+    } finally {
+      eegSamplesLoading=false;
+    }
+  }
+
+  /* Scene JSON */
+  function sceneType() {
+    return V2.scene?.scene_type || V2.scene?.world_state?.scene_family || 'scene';
+  }
+  function sceneVisual(sceneName) {
+    const key=String(sceneName||'').toLowerCase();
+    return Object.entries(SCENE_VISUALS).find(([k])=>key.includes(k))?.[1] || SCENE_VISUALS.default;
+  }
+  function applySceneVisual() {
+    const root=document.getElementById('v3');
+    if (!root) return;
+    const v=sceneVisual(sceneType());
+    root.style.setProperty('--v3-scene-img',`url('${v.img}')`);
+    root.style.setProperty('--v3-accent',v.accent);
+    root.style.setProperty('--v3-orb-a',v.orbA);
+    root.style.setProperty('--v3-orb-b',v.orbB);
+  }
+  function cleanName(value) {
+    const raw=String(value||'').replace(/\\/g,'/').split('/').pop() || 'sound';
+    return raw.replace(/\.(wav|mp3|ogg|flac|aiff|aif)$/i,'');
+  }
+  function displayName(source) {
+    return cleanName(source?.clip || source?.asset_ref || source?.source_id || source?.id || source);
+  }
+  function escHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+      '&':'&amp;',
+      '<':'&lt;',
+      '>':'&gt;',
+      '"':'&quot;',
+      "'":'&#39;'
+    }[ch]));
+  }
+  function sceneSourceList() {
+    const active=new Set(V2.scene?.world_state?.active_sources || []);
+    const byId={};
+    (V2.scene?.sources || []).forEach(s=>{
+      const id=s.source_id || s.id || s.asset_ref;
+      if (id) byId[id]=s;
+    });
+    return renderableSources(V2.scene,V2.unityRuntime,V2.unityCommands).map(src=>{
+      const base=byId[src.id] || {};
+      return {
+        ...base,
+        ...src,
+        source_id: src.id || base.source_id,
+        category: base.category || (src.motion?.type && src.motion.type !== 'none' ? 'event' : 'ambient'),
+        asset_ref: base.asset_ref || src.clip || src.id,
+        active: src.isActive || active.has(src.id),
+      };
+    });
+  }
+  function groupedSceneSources() {
+    const groups={ambient:[],event:[],action:[]};
+    sceneSourceList().forEach(s=>{
+      const cat=(s.category||'ambient').toLowerCase();
+      const key=cat.includes('action')||cat.includes('narration')?'action':cat.includes('event')?'event':'ambient';
+      groups[key].push(s);
+    });
+    return groups;
+  }
+  function sceneAtmosphere() {
+    const st=sceneType();
+    const mental=latestWindowMental?.mental_state || latestWindowMental || V2.scene?.mental_state || {};
+    if (mental && Object.keys(mental).length) return mentalAtmosphere(mental);
+    return V2.scene?.world_state?.atmosphere || V2.scene?.atmosphere || `A ${st} soundscape is ready.`;
+  }
+  function sceneNarration() {
+    const mental=latestWindowMental?.mental_state || latestWindowMental || V2.scene?.mental_state || {};
+    if (mental && Object.keys(mental).length) return mentalNarration(mental);
+    return V2.scene?.narration_script || 'Your adaptive soundscape will respond to the EEG session.';
+  }
+  function metric01(mental, key) {
+    const display=mental.display_scores || mental.mental_state?.display_scores;
+    const raw=display?.[key] ?? mental[key] ?? mental.mental_state?.[key];
+    const n=Number(raw);
+    if (!Number.isFinite(n)) return null;
+    return Math.max(0,Math.min(1,n > 1 ? n/100 : n));
+  }
+  function mentalVariant(mental) {
+    const raw=mental?.window_id ?? mental?.step ?? mental?.session_elapsed_sec ?? V2.idx ?? 0;
+    const n=Number(raw);
+    return Number.isFinite(n) ? Math.max(0,Math.floor(n)) : 0;
+  }
+  function pickVariant(options, variant) {
+    return options[Math.max(0,variant) % options.length];
+  }
+  function mentalNarration(mental) {
+    const state=String(mental.llm_state || mental.state_label || mental.rule_state || '').toLowerCase();
+    const attention=metric01(mental,'attention');
+    const relaxation=metric01(mental,'relaxation');
+    const stability=metric01(mental,'stability');
+    const variant=mentalVariant(mental);
+    const place=sceneType().includes('ocean') || sceneType().includes('beach') ? 'shoreline' : 'forest';
+    if (relaxation != null && relaxation < .45) {
+      return pickVariant([
+        `Let the ${place} soften around you; follow the gentlest layer back toward ease.`,
+        'Let the closest sound become your anchor, then loosen your shoulders with the next breath.',
+        'Stay with the softest texture in the scene and let the rest of the space slow down.',
+        'Allow the soundscape to hold the edges of your attention while your body settles.',
+      ], variant);
+    }
+    if ((attention != null && attention < .45) || state.includes('distract')) {
+      return pickVariant([
+        'Notice the small directional cues, then return your attention to the space around you.',
+        'Follow one moving cue across the scene, then come back to the center of your breath.',
+        'Let the next distant sound gently point your attention outward and back again.',
+      ], variant);
+    }
+    if (stability != null && stability < .65) {
+      return pickVariant([
+        'Stay with the steady background sound as the scene settles into a more balanced rhythm.',
+        'Let the stable layer underneath the scene set the pace for the next few breaths.',
+        'Keep your attention on the slow bed of sound while the moving details become quieter.',
+      ], variant);
+    }
+    if (state.includes('focus')) {
+      return 'Keep your focus lightly open while the soundscape stays spacious and steady.';
+    }
+    const implication=mental.scene_implication;
+    if (typeof implication === 'string' && implication.trim()) return implication.trim();
+    if (implication && typeof implication === 'object') {
+      const text=implication.summary || implication.description || implication.note || implication.recommendation;
+      if (text) return String(text).trim();
+    }
+    return V2.scene?.narration_script || `Let this segment continue gently, with your breath and the ${place} moving together.`;
+  }
+  function mentalAtmosphere(mental) {
+    const state=String(mental.llm_state || mental.state_label || mental.rule_state || '').toLowerCase();
+    const attention=metric01(mental,'attention');
+    const relaxation=metric01(mental,'relaxation');
+    const stability=metric01(mental,'stability');
+    const variant=mentalVariant(mental);
+    const isOcean=sceneType().includes('ocean') || sceneType().includes('beach');
+    if (relaxation != null && relaxation < .45) {
+      return pickVariant(isOcean ? [
+        'close shoreline air with softened waves and steady grounding texture',
+        'low tide ambience with rounded surf and near-body calm',
+        'muted coastal air with slow foam movement and gentle grounding',
+      ] : [
+        'soft enclosed forest air with gentle grounding movement',
+        'warm forest hush with low rustling textures close to the body',
+        'quiet green air with softened leaf motion and slower breath-like pacing',
+        'sheltered woodland space with gentle near-field movement',
+      ], variant);
+    }
+    if ((attention != null && attention < .45) || state.includes('distract')) {
+      return pickVariant(isOcean ? [
+        'wide coastal air with clear distant cues and gentle side movement',
+        'open shoreline space with small directional calls over steady waves',
+        "bright sea air with sparse cues crossing the listener's edge",
+      ] : [
+        'clear forest space with small directional cues and light motion',
+        'open woodland air with tiny far cues drawing attention outward',
+        'leaf-filtered space with subtle side movement and crisp distant detail',
+      ], variant);
+    }
+    if (stability != null && stability < .65) {
+      return pickVariant(isOcean ? [
+        'balanced seaside air with slow wave rhythm and reduced motion',
+        'settled coastal texture with even surf and softened motion',
+      ] : [
+        'steady forest air with slower texture and balanced movement',
+        'grounded forest ambience with reduced motion and even spacing',
+        'calm woodland texture with stable layers and softened transitions',
+      ], variant);
+    }
+    return isOcean ? 'open seaside air with spacious waves and calm forward focus' : 'open forest calm with spacious attention and stable organic motion';
+  }
+  async function pollSceneAdaptation(pending, tries=0) {
+    if (!pending || scenePollInFlight || endingSession) return;
+    scenePollInFlight=true;
+    try {
+      await new Promise(resolve => setTimeout(resolve, tries ? 420 : 180));
+      const r=await fetch('/api/state', {cache:'no-store'});
+      if (!r.ok) return;
+      const d=await r.json();
+      applyState(d);
+      const latest=(d.mental_history||[]).slice(-1)[0];
+      if (latest) {
+        latestWindowMental=latest;
+        latestRecItem=latest;
+      }
+      refreshScene();
+      if (d.adaptation_pending && tries < 8) {
+        scenePollInFlight=false;
+        pollSceneAdaptation(d.adaptation_pending, tries+1);
+      }
+    } catch(e) {
+      console.warn('V3 scene adaptation poll failed', e);
+    } finally {
+      scenePollInFlight=false;
+    }
+  }
+  function refreshScene() {
+    const st=sceneType();
+    applySceneVisual();
+    sEl('v3-prev-env',st);
+    sEl('v3-map-env',st);
+    sEl('v3-prev-desc',sceneAtmosphere());
+    sEl('v3-prev-exp',`"${sceneNarration()}"`);
+    renderJson();
+    renderPills();
+    renderGuidance(phaseIdx);
+  }
+  function renderJson() {
+    const el=document.getElementById('v3-scene-json'); if(!el) return;
+    const scene=V2.scene || {};
+    const names=sceneSourceList().map(s=>displayName(s));
+    const audioLines=names.slice(0,6).map(n=>`    "${n}"`).join(',\n');
+    el.textContent=`Scene = {
+  environment_type: "${sceneType()}"
+  atmosphere: "${sceneAtmosphere()}"
+  narration: "${sceneNarration()}"
+  active_audio: [
+${audioLines}${names.length>6 ? ',\n    ...' : ''}
+  ]
+  phase: ${phaseIdx+1}/4 ->${PHASES[phaseIdx]}
+  density: ${DENSITIES[phaseIdx]} ->${DENSITIES[Math.min(3,phaseIdx+1)]}
+  dynamics: ${phaseIdx===2?'active':'stable'}
+}`;
+  }
+
+  /* Sound pills */
+  function renderPills() {
+    const groups=groupedSceneSources();
+    mkPills('v3-ambient',groups.ambient,FALLBACK_BY_CAT.ambient);
+    mkPills('v3-event',  groups.event,  FALLBACK_BY_CAT.event);
+    mkPills('v3-action', groups.action, FALLBACK_BY_CAT.action);
+  }
+  function mkPills(id,sources,fallbackNames) {
+    const el=document.getElementById(id); if(!el) return;
+    const items=sources.length?sources:fallbackNames.map(n=>({asset_ref:n,active:false}));
+    el.innerHTML=items.map(s=>{
+      const name=displayName(s);
+      return `<span class="v3-pill${s.active?' on':''}" title="${escHtml(name)}">${escHtml(name)}</span>`;
+    }).join('');
+  }
+
+  /* EEG bars */
+  const BCOLORS={
+    alpha:'rgba(232,135,139,.94)',
+    beta:'rgba(246,216,115,.94)',
+    theta:'rgba(155,235,173,.94)',
+    delta:'rgba(147,205,240,.94)',
+    gamma:'rgba(201,168,239,.94)'
+  };
+  const SCORE_COLORS={
+    relaxation:'rgba(132,217,118,.94)',
+    attention:'rgba(102,144,255,.94)',
+    stability:'rgba(165,108,240,.94)'
+  };
+  const BLABELS={alpha:'Alpha',beta:'Beta',theta:'Theta',delta:'Delta',gamma:'Gamma'};
+  function ensureBars() {
+    const el=document.getElementById('v3-eeg-bars'); if(!el) return null;
+    if (!el.querySelector('.v3-band-chart')) {
+      el.innerHTML=`<div class="v3-band-chart">${Object.keys(BLABELS).map(k=>`
+        <div class="v3-band-bar">
+          <div class="v3-band-name">${BLABELS[k]}</div>
+          <div class="v3-band-fill" data-band="${k}" data-base="0" style="height:4px;background:${BCOLORS[k]};opacity:.86"></div>
+        </div>`).join('')}</div>`;
+    }
+    return el;
+  }
+  function renderBars(bands) {
+    if (!ensureBars()) return;
+    v3TargetBands={...v3TargetBands,...bands};
+  }
+  function renderEEGWaiting() {
+    const el=ensureBars(); if(!el) return;
+    v3Bands={alpha:0,beta:0,theta:0,delta:0,gamma:0};
+    v3TargetBands={alpha:0,beta:0,theta:0,delta:0,gamma:0};
+    v3Scores={relaxation:0,attention:0,stability:0};
+    v3TargetScores={relaxation:0,attention:0,stability:0};
+    sEl('v3-rel-v','--');
+    sEl('v3-att-v','--');
+    sEl('v3-stb-v','--');
+    renderMentalTrend(null, null);
+  }
+  function updateBandBars() {
+    Object.keys(v3TargetBands).forEach(key=>{
+      const cur=Number(v3Bands[key])||0;
+      const target=Number(v3TargetBands[key])||0;
+      v3Bands[key]=cur+(target-cur)*0.14;
+    });
+    Object.keys(v3TargetScores).forEach(key=>{
+      const cur=Number(v3Scores[key])||0;
+      const target=Number(v3TargetScores[key])||0;
+      v3Scores[key]=cur+(target-cur)*0.14;
+    });
+    document.querySelectorAll('#v3-eeg-bars .v3-band-fill').forEach((el,i)=>{
+      const key=el.dataset.band;
+      const base=normBand(v3Bands[key] ?? Number(el.dataset.base) ?? .2);
+      el.style.height=`${Math.round(Math.max(.06,base)*66)}px`;
+      el.dataset.base=String(base);
+    });
+    if (latestMental) renderMental(latestMental, latestPreviousMental);
+  }
+
+  /* Mental state cards */
+  function normBand(v) {
+    const n=Number(v);
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0,Math.min(1,n));
+  }
+  function interpretationNumber(v) {
+    const n=Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  function mentalScale01(v) {
+    const n=interpretationNumber(v);
+    if (n == null) return null;
+    return Math.max(0,Math.min(1,n <= 1 ? n : n/10));
+  }
+  function sigmoid(v) {
+    if (v >= 40) return 1;
+    if (v <= -40) return 0;
+    return 1 / (1 + Math.exp(-v));
+  }
+  function hasValidEEGBandSignal(f) {
+    if (!f) return false;
+    return ['delta_mean','theta_mean','alpha_mean','beta_mean','gamma_mean']
+      .some(key => {
+        const n=Number(f[key]);
+        return Number.isFinite(n) && Math.abs(n) > 1e-9;
+      });
+  }
+  function smoothDisplayScores(f) {
+    if (!f) return null;
+    if (!hasValidEEGBandSignal(f)) {
+      return {attention:null, relaxation:null, stability:null, signal_quality:'insufficient_eeg_signal'};
+    }
+    const thetaBeta = Number.isFinite(Number(f.theta_beta_ratio)) ? Number(f.theta_beta_ratio) : .9;
+    const alphaBetaRaw = f.relaxation_score ?? f.alpha_beta_ratio;
+    const alphaBeta = Number.isFinite(Number(alphaBetaRaw)) ? Number(alphaBetaRaw) : 2.2;
+    const stabilityRaw = f.stability_score;
+    const stability = Number.isFinite(Number(stabilityRaw)) ? Number(stabilityRaw) : 6;
+    return {
+      attention:sigmoid((.9 - Math.abs(thetaBeta)) / .45),
+      relaxation:sigmoid((alphaBeta - 2.2) / .9),
+      stability:sigmoid((stability - 6) / 1.6),
+    };
+  }
+  function scoreSeriesFromFeatures(f) {
+    return smoothDisplayScores(f);
+  }
+  function bandSeriesFromFeatures(f) {
+    if (!f) return null;
+    return {
+      alpha:normBand(f.alpha_mean),
+      beta:normBand(f.beta_mean),
+      theta:normBand(f.theta_mean),
+      delta:normBand(f.delta_mean),
+      gamma:normBand(f.gamma_mean),
+    };
+  }
+  function mentalScoresFromWindow(item) {
+    const mental=item?.mental_state || item;
+    if (!mental) return null;
+    const display=mental.display_scores || item?.display_scores;
+    if (display) {
+      return {
+        attention:mentalScale01(display.attention),
+        relaxation:mentalScale01(display.relaxation),
+        stability:mentalScale01(display.stability),
+      };
+    }
+    return {
+      attention:mentalScale01(mental.attention ?? item?.attention),
+      relaxation:mentalScale01(mental.relaxation ?? item?.relaxation),
+      stability:mentalScale01(mental.stability ?? item?.stability),
+    };
+  }
+  function previousWindowMental(item) {
+    const hist=Array.isArray(V2.history) ? V2.history : [];
+    if (!hist.length) return null;
+    const idx=hist.findIndex(h => h === item || String(h?.window_id) === String(item?.window_id));
+    if (idx > 0) return hist[idx-1];
+    if (idx < 0 && hist.length > 1 && hist[hist.length-1] === item) return hist[hist.length-2];
+    return null;
+  }
+  function renderMentalFromWindowOutput(item) {
+    if (!item) return;
+    latestWindowMental=item;
+    const scores=mentalScoresFromWindow(item);
+    latestMental=scores;
+    latestPreviousMental=mentalScoresFromWindow(previousWindowMental(item));
+    renderMental(scores, latestPreviousMental);
+  }
+  function renderFromPayload(payload, opts={}) {
+    const f=payload?.current_features;
+    if (!f) {
+      if (!hasRealEEG) renderEEGWaiting();
+      return;
+    }
+    if (!hasValidEEGBandSignal(f)) {
+      renderEEGWaiting();
+      renderMental(null);
+      return;
+    }
+    markEEGReceived();
+    hasRealEEG=true;
+    const scores = scoreSeriesFromFeatures(f);
+    const bands = bandSeriesFromFeatures(f);
+    if (!scores) return;
+    if (bands) renderBars(bands);
+    v3TargetScores={...v3TargetScores,...scores};
+    if (opts.immediate) {
+      if (bands) v3Bands={...v3Bands,...bands};
+      v3Scores={...v3Scores,...scores};
+    }
+    if (opts.recordHistory !== false) {
+      const windowId = payload.window_id ?? payload.time_sec ?? v3BandHistory.length;
+      if (!v3BandHistory.length || v3BandHistory[v3BandHistory.length-1].window_id !== windowId) {
+        v3BandHistory.push({window_id: windowId, time_range_sec: payload.time_range_sec, time_sec: payload.time_sec, bands, scores});
+        if (v3BandHistory.length > 80) v3BandHistory = v3BandHistory.slice(-80);
+      } else {
+        v3BandHistory[v3BandHistory.length-1] = {window_id: windowId, time_range_sec: payload.time_range_sec, time_sec: payload.time_sec, bands, scores};
+      }
+    }
+    if (!latestWindowMental) {
+      latestMental=scores;
+      renderMental(scores);
+    }
+  }
+  function mentalText(v) {
+    return v == null ? '--' : String(Math.round(Math.max(0,Math.min(1,Number(v))) * 100));
+  }
+  function mentalTrendText(current, previous) {
+    if (current == null || previous == null) return {text:'--', cls:'v3ts'};
+    const delta=Number(current)-Number(previous);
+    if (!Number.isFinite(delta) || Math.abs(delta) < 0.01) return {text:'→ 0', cls:'v3ts'};
+    return {
+      text:`${delta > 0 ? '↑' : '↓'} ${Math.round(Math.abs(delta) * 100)}`,
+      cls:delta > 0 ? 'v3tu' : 'v3td',
+    };
+  }
+  function setTrend(id, trend) {
+    const e=document.getElementById(id);
+    if (!e) return;
+    e.className=`v3-mtrend ${trend.cls}`;
+    e.textContent=trend.text;
+  }
+  function renderMentalTrend(mental, previous) {
+    setTrend('v3-rel-tr', mentalTrendText(mental?.relaxation, previous?.relaxation));
+    setTrend('v3-att-tr', mentalTrendText(mental?.attention, previous?.attention));
+    setTrend('v3-stb-tr', mentalTrendText(mental?.stability, previous?.stability));
+  }
+  function setThreshold(id, labelId, value, threshold, active, text, marker=threshold, positiveActive=false) {
+    const bar=document.getElementById(id);
+    const label=document.getElementById(labelId);
+    const n=Number(value);
+    const pct=Number.isFinite(n) ? Math.max(0,Math.min(100,n*100)) : 0;
+    const hasState=active !== null;
+    if (bar) {
+      const fill=bar.querySelector('span');
+      const mark=bar.querySelector('i');
+      if (fill) fill.style.width=`${pct}%`;
+      if (mark) mark.style.left=`${Math.max(0,Math.min(100,marker*100))}%`;
+      bar.classList.toggle('on', hasState && !!active);
+      bar.classList.toggle('fail', hasState && positiveActive && !active);
+    }
+    if (label) {
+      label.textContent=text;
+      const stateClass=!hasState ? '' : positiveActive
+        ? (active ? 'good' : 'on')
+        : (active ? 'on' : 'good');
+      label.className=`v3-thtxt ${stateClass}`;
+    }
+  }
+  function renderMentalThresholds(mental, previous) {
+    const hasAttention=mental?.attention != null && Number.isFinite(Number(mental.attention));
+    const hasRelaxation=mental?.relaxation != null && Number.isFinite(Number(mental.relaxation));
+    const hasStability=mental?.stability != null && Number.isFinite(Number(mental.stability));
+    const attentionDelta = hasAttention && previous?.attention != null ? Number(mental.attention)-Number(previous.attention) : 0;
+    const attentionDown = Number.isFinite(attentionDelta) && attentionDelta < -0.04;
+    const attentionCue = hasAttention ? (Number(mental.attention) < 0.45 || attentionDown) : null;
+    const relaxationLow = hasRelaxation ? Number(mental.relaxation) < 0.45 : null;
+    const stabilityHigh = hasStability ? Number(mental.stability) >= 0.65 : null;
+    setThreshold('v3-rel-th','v3-rel-thtxt',mental?.relaxation,0.45,relaxationLow,!hasRelaxation ? '--' : (relaxationLow ? 'low < 45' : 'ok >= 45'));
+    setThreshold('v3-att-th','v3-att-thtxt',mental?.attention,0.45,attentionCue,!hasAttention ? '--' : (attentionDown ? 'cue: down' : (attentionCue ? 'cue < 45' : 'ok >= 45')));
+    setThreshold('v3-stb-th','v3-stb-thtxt',mental?.stability,0.65,stabilityHigh,!hasStability ? '--' : (stabilityHigh ? 'high >= 65' : 'below 65'),0.65,true);
+  }
+  function renderMental(mental, previous=null) {
+    sEl('v3-rel-v',mentalText(mental?.relaxation));
+    sEl('v3-att-v',mentalText(mental?.attention));
+    sEl('v3-stb-v',mentalText(mental?.stability));
+    renderMentalTrend(mental, previous);
+    renderMentalThresholds(mental, previous);
+  }
+  function sEl(id,v){const e=document.getElementById(id);if(e)e.textContent=v;}
+  function sHTML(id,h){const e=document.getElementById(id);if(e)e.innerHTML=h;}
+  function renderGuidance(i){sEl('v3-guidance',sceneNarration() || GUIDANCE[i] || GUIDANCE[0]);}
+  function renderRec(i){
+    if (latestRecItem) {
+      renderRecFromMental(latestRecItem);
+      return;
+    }
+    sEl('v3-rec',RECS[i]||RECS[0]);
+  }
+  function renderRecFromMental(item) {
+    if (!item) return;
+    latestRecItem=item;
+    sEl('v3-rec',`EEG window ${item.window_id ?? '?'}\nstate: ${item.llm_state || item.rule_state || 'unknown'}\ntrend: ${item.trend || 'stable'}\nconfidence: ${item.confidence != null ? Number(item.confidence).toFixed(2) : '--'}`);
+  }
+  function playbackElapsedSec() {
+    return sessionStartMs ? Math.max(0,(performance.now()-sessionStartMs)/1000) : sec;
+  }
+  function playbackSampleAt(t) {
+    const samples=eegPlaybackSamples;
+    if (!samples.length) return null;
+    if (t <= Number(samples[0].time_sec||0)) return samples[0];
+    let lo=0, hi=samples.length-1;
+    while (lo < hi) {
+      const mid=Math.floor((lo+hi)/2);
+      if (Number(samples[mid].time_sec||0) < t) lo=mid+1;
+      else hi=mid;
+    }
+    const a=samples[Math.max(0,lo-1)], b=samples[lo];
+    if (!a || !b) return b || a;
+    return Math.abs(t-Number(a.time_sec||0)) <= Math.abs(Number(b.time_sec||0)-t) ? a : b;
+  }
+  function updateEEGPlaybackFrame() {
+    if (eegMode !== 'recorded' || !playing || endingSession || !eegPlaybackSamples.length) return;
+    const t=playbackElapsedSec();
+    const sample=playbackSampleAt(t);
+    if (!sample) return;
+    const historyKey=Math.floor(t*4);
+    renderFromPayload(sample, {recordHistory: historyKey!==lastPlaybackHistoryAt});
+    lastPlaybackHistoryAt=historyKey;
+  }
+
+  /* Spatial sources */
+  function updateSrcs(pi) {
+    SRCS.forEach((s,i)=>{ s.on = i<(pi===0?0:pi===1?2:3); });
+  }
+  function sourceLayer(src) {
+    return String(src?.category || src?.layer || '').toLowerCase();
+  }
+  function shouldShowSource(src, hasRuntime) {
+    const layer=sourceLayer(src);
+    if (layer.includes('event')) return hasRuntime && !!src.isActive;
+    return true;
+  }
+  function currentUnitySources() {
+    const freshRuntime=freshUnityRuntime(V2.unityRuntime);
+    const hasRuntime=!!freshRuntime;
+    const sources=renderableSources(V2.scene, freshRuntime, V2.unityCommands)
+      .filter(src=>shouldShowSource(src, hasRuntime));
+    return hasRuntime ? sources : animateV3Sources(sources);
+  }
+  function idSeed(id) {
+    if (v3MotionSeed[id] != null) return v3MotionSeed[id];
+    let h=0;
+    String(id).split('').forEach(ch=>{ h=((h<<5)-h)+ch.charCodeAt(0); h|=0; });
+    v3MotionSeed[id]=Math.abs(h%10000)/10000;
+    return v3MotionSeed[id];
+  }
+  function withPosShape(original, x, y, z) {
+    if (Array.isArray(original)) return [x,y,z];
+    return {x,y,z};
+  }
+  function motionCenterXZ(motion, fallbackX, fallbackZ) {
+    const c=motion?.center;
+    if (Array.isArray(c)) return {x:Number(c[0])||0,z:Number(c[2])||0};
+    if (c && typeof c==='object') return {x:Number(c.x)||0,z:Number(c.z)||0};
+    return {x:fallbackX,z:fallbackZ};
+  }
+  function animateV3Sources(sources) {
+    const t=performance.now()/1000;
+    return sources.map(src=>{
+      const motion=src.motion;
+      if (!motion || motion.type==='none') return src;
+      const {x,z}=srcXZ(src.position);
+      const y=Array.isArray(src.position) ? (src.position[1]||0) : (src.position?.y||0);
+      const seed=idSeed(src.id);
+      let nx=x, nz=z;
+      if (motion.type==='circle' || motion.type==='orbit' || motion.type==='slow_orbit') {
+        const speed=Math.max(.04,Number(motion.speed)||.22);
+        const radius=Math.max(.25,Number(motion.radius)||1.2);
+        const phase=seed*Math.PI*2;
+        const c=motionCenterXZ(motion,x,z);
+        nx=c.x+Math.cos(t*speed+phase)*radius;
+        nz=c.z+Math.sin(t*speed+phase)*radius;
+      } else if (motion.type==='breathing') {
+        const speed=Math.max(.04,Number(motion.speed)||.2);
+        const minR=Number(motion.minRadius)||.4;
+        const maxR=Number(motion.maxRadius)||1.5;
+        const radius=minR+(maxR-minR)*((Math.sin(t*speed+seed*Math.PI*2)+1)*.5);
+        nx=x+radius*.7;
+        nz=z+radius*.7;
+      } else if (motion.type==='random') {
+        nx=x+Math.sin(t*.7+seed*9)*.55;
+        nz=z+Math.cos(t*.53+seed*11)*.55;
+      }
+      return {...src,position:withPosShape(src.position,nx,y,nz),isActive:true};
+    });
+  }
+  function listenerXZ() {
+    const rt=freshUnityRuntime(V2.unityRuntime);
+    const p=rt?.listener_position || rt?.listenerPosition || rt?.camera_position || rt?.cameraPosition;
+    if (Array.isArray(p)) return {x:Number(p[0])||0,z:Number(p[2])||0};
+    if (p && typeof p==='object') return {x:Number(p.x)||0,z:Number(p.z)||0};
+    return {x:0,z:0};
+  }
+  function sourceCanvasPoint(position, cx, cy, rO, relativeToListener=false) {
+    const {x,z}=srcXZ(position);
+    const listener=relativeToListener ? listenerXZ() : {x:0,z:0};
+    const nx=Math.max(-1,Math.min(1,(x-listener.x)/MAX_D));
+    const nz=Math.max(-1,Math.min(1,(z-listener.z)/MAX_D));
+    return {x:cx+nx*rO, y:cy-nz*rO};
+  }
+  function drawSourceLabel(ctx, id, x, y, sz) {}
+  function v3RGB(name, fallback) {
+    const root=document.getElementById('v3');
+    return (root ? getComputedStyle(root).getPropertyValue(name).trim() : '') || fallback;
+  }
+  function drawLiveSources(ctx, sources, cx, cy, rO, sz) {
+    const orbA=v3RGB('--v3-orb-a','190,255,205');
+    const seen=new Set();
+    sources.forEach((src,i)=>{
+      const id=src.id||String(i);
+      seen.add(id);
+      const p=sourceCanvasPoint(src.position,cx,cy,rO,!!freshUnityRuntime(V2.unityRuntime));
+      const volume=clamp01(src.volume);
+      const isActive=!!src.isActive;
+      const color=REAL_COLORS[i%REAL_COLORS.length];
+      const rr=Math.max(9,volumeRadius(volume)*.62);
+
+      if (!v3Trails[id]) v3Trails[id]=[];
+      const tr=v3Trails[id];
+      const last=tr[tr.length-1];
+      if (!last || Math.abs(last.x-p.x)>.35 || Math.abs(last.y-p.y)>.35) {
+        tr.push(p);
+        if (tr.length>16) tr.shift();
+      }
+
+      ctx.save();
+      ctx.globalCompositeOperation='lighter';
+
+      const afterimages=tr.slice(-10);
+      afterimages.forEach((pt,j)=>{
+        const a=(j+1)/afterimages.length;
+        const ghostR=rr*(.62+a*.58);
+        const streakLen=rr*(2.05+a*4.2);
+        const streak=ctx.createLinearGradient(pt.x,pt.y-streakLen,pt.x,pt.y+streakLen*.45);
+        streak.addColorStop(0,'transparent');
+        streak.addColorStop(.34,color.replace(/[\d.]+\)$/,(.03+a*.13).toFixed(3)+')'));
+        streak.addColorStop(.53,`rgba(${orbA},${(.032+a*.12).toFixed(3)})`);
+        streak.addColorStop(1,'transparent');
+        ctx.filter=`blur(${Math.max(3.2, rr*(.28+(1-a)*.34))}px)`;
+        ctx.beginPath();
+        ctx.ellipse(pt.x,pt.y,ghostR*.48,streakLen,0,0,Math.PI*2);
+        ctx.fillStyle=streak;
+        ctx.fill();
+
+        const ghost=ctx.createRadialGradient(pt.x-ghostR*.12,pt.y-ghostR*.14,0,pt.x,pt.y,ghostR*1.35);
+        ghost.addColorStop(0,`rgba(255,255,255,${.04+a*.12})`);
+        ghost.addColorStop(.24,`rgba(${orbA},${.045+a*.11})`);
+        ghost.addColorStop(.72,color.replace(/[\d.]+\)$/,(.032+a*.12).toFixed(3)+')'));
+        ghost.addColorStop(1,'transparent');
+        ctx.filter=`blur(${Math.max(1.4, rr*(.16+(1-a)*.14))}px)`;
+        ctx.beginPath();
+        ctx.arc(pt.x,pt.y,ghostR,0,Math.PI*2);
+        ctx.fillStyle=ghost;
+        ctx.fill();
+      });
+
+      ctx.filter=`blur(${Math.max(6,rr*.7)}px)`;
+      const halo=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,rr*(isActive?3.9:3.1));
+      halo.addColorStop(0,color.replace(/[\d.]+\)$/,'0.075)'));
+      halo.addColorStop(.48,`rgba(${orbA},.04)`);
+      halo.addColorStop(1,'transparent');
+      ctx.beginPath();
+      ctx.arc(p.x,p.y,rr*(isActive?3.9:3.1),0,Math.PI*2);
+      ctx.fillStyle=halo;
+      ctx.fill();
+
+      ctx.filter='none';
+      const core=ctx.createRadialGradient(p.x-rr*.12,p.y-rr*.14,0,p.x,p.y,rr*1.5);
+      core.addColorStop(0,'rgba(255,255,255,.34)');
+      core.addColorStop(.24,`rgba(${orbA},.28)`);
+      core.addColorStop(.66,color.replace(/[\d.]+\)$/,'0.26)'));
+      core.addColorStop(1,'transparent');
+      ctx.beginPath();
+      ctx.arc(p.x,p.y,rr*1.52,0,Math.PI*2);
+      ctx.fillStyle=core;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(p.x,p.y,Math.max(1.8,rr*.16),0,Math.PI*2);
+      ctx.fillStyle='rgba(255,255,255,.28)';
+      ctx.fill();
+      ctx.restore();
+    });
+    Object.keys(v3Trails).forEach(id=>{ if(!seen.has(id)) delete v3Trails[id]; });
+  }
+
+  /* Spatial map (canvas RAF loop) */
+  function scheduleMap() {
+    const cv=document.getElementById('v3-map'); if(!cv) return;
+    const parent=cv.parentElement;
+    const raw=Math.min(parent.clientWidth-42, parent.clientHeight-96, 560);
+    const sz=Math.max(280,raw);
+    const dpr=Math.min(2.5,window.devicePixelRatio||1);
+    cv.style.width=`${sz}px`;
+    cv.style.height=`${sz}px`;
+    cv.width=Math.round(sz*dpr);
+    cv.height=Math.round(sz*dpr);
+    cv.dataset.mapSize=String(sz);
+    cv.dataset.mapDpr=String(dpr);
+    drawMap();
+  }
+  function drawMap() {
+    const cv=document.getElementById('v3-map'); if(!cv) return;
+    const ctx=cv.getContext('2d');
+    const sz=Number(cv.dataset.mapSize)||cv.clientWidth||cv.width;
+    const dpr=Number(cv.dataset.mapDpr)||1;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    const cx=sz/2, cy=sz/2;
+    const rO=sz*.475, rM=sz*.325, rI=sz*.185;
+    ctx.clearRect(0,0,sz,sz);
+
+    /* rings */
+    const ringLabels=[
+      {r:rO,lbl:'FAR',sub:'6m+',y:sz-sz*.072},
+      {r:rM,lbl:'MIDDLE',sub:'[3m,6m]',y:Math.min(cy+rM+sz*.038, sz-sz*.17)},
+      {r:rI,lbl:'NEAR',sub:'[0,3m]',y:Math.min(cy+rI+sz*.038, cy+rM-sz*.022)},
+    ];
+    ringLabels.forEach(({r,lbl,sub,y})=>{
+      ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+      ctx.strokeStyle='rgba(255,255,255,.135)';
+      ctx.lineWidth=.72;
+      ctx.shadowColor='rgba(255,255,255,.055)';
+      ctx.shadowBlur=8;
+      ctx.stroke();
+      ctx.shadowBlur=0;
+      ctx.fillStyle='rgba(255,255,255,.34)';
+      ctx.textAlign='center';
+      ctx.font=`500 ${Math.max(9,sz*.022)}px Inter, Arial`;
+      ctx.fillText(lbl,cx,y);
+      ctx.fillStyle='rgba(255,255,255,.24)';
+      ctx.font=`300 ${Math.max(7,sz*.017)}px Inter, Arial`;
+      ctx.fillText(sub,cx,y+sz*.023);
+    });
+
+    const liveSources=currentUnitySources();
+    if (liveSources.length) {
+      drawLiveSources(ctx,liveSources,cx,cy,rO,sz);
+    } else {
+      /* sound sources */
+      SRCS.forEach(src=>{
+        if (!src.on) return;
+        const rad=src.angle*Math.PI/180;
+        const r=src.dist*rO;
+        const sx=cx+Math.cos(rad)*r, sy=cy-Math.sin(rad)*r;
+        const rr=12;
+        const g=ctx.createRadialGradient(sx,sy,0,sx,sy,42);
+        g.addColorStop(0,src.color);
+        g.addColorStop(.42,'rgba(255,255,255,.1)');
+        g.addColorStop(1,'transparent');
+        ctx.beginPath(); ctx.arc(sx,sy,42,0,Math.PI*2); ctx.fillStyle=g; ctx.fill();
+        ctx.save();
+        ctx.shadowColor=src.color; ctx.shadowBlur=16;
+        const orb=ctx.createRadialGradient(sx-5,sy-6,1,sx,sy,rr);
+        orb.addColorStop(0,'rgba(255,255,255,.72)');
+        orb.addColorStop(.35,src.color);
+        orb.addColorStop(1,'rgba(110,190,230,.72)');
+        ctx.beginPath(); ctx.arc(sx,sy,rr,0,Math.PI*2); ctx.fillStyle=orb; ctx.fill();
+        ctx.strokeStyle='rgba(255,255,255,.4)'; ctx.lineWidth=.9; ctx.stroke();
+        ctx.restore();
+      });
+    }
+
+    /* YOU dot */
+    ctx.save();
+    ctx.shadowColor='rgba(255,255,255,.22)';
+    ctx.shadowBlur=8;
+    ctx.beginPath(); ctx.arc(cx,cy,5.2,0,Math.PI*2); ctx.fillStyle='rgba(255,255,255,.52)'; ctx.fill();
+    ctx.restore();
+    ctx.fillStyle='rgba(255,255,255,.46)'; ctx.textAlign='center';
+    ctx.font=`400 ${Math.max(9,sz*.022)}px Inter, Arial`; ctx.fillText('YOU',cx,cy+sz*.055);
+
+    if (!liveSources.length) {
+      /* animate sources */
+      SRCS.forEach(s=>{
+        s.angle+=s.vA; s.dist+=s.vD;
+        if (s.dist>.94||s.dist<.15) s.vD*=-1;
+      });
+    }
+    mapRAF=requestAnimationFrame(drawMap);
+  }
+
+  /* EEG waveform (canvas RAF loop) */
+  function scheduleWave() { tickWave(); }
+  function prepCanvas(canvas) {
+    const rect=canvas.getBoundingClientRect();
+    const dpr=Math.min(2.5,window.devicePixelRatio||1);
+    const w=Math.max(1,Math.round(rect.width*dpr));
+    const h=Math.max(1,Math.round(rect.height*dpr));
+    if (canvas.width!==w || canvas.height!==h) {
+      canvas.width=w;
+      canvas.height=h;
+      canvas.dataset.dpr=String(dpr);
+    }
+    return {w:rect.width,h:rect.height,dpr};
+  }
+  function tickWave() {
+    const cv=document.getElementById('v3-wave'); if(!cv) { waveRAF=requestAnimationFrame(tickWave); return; }
+    const ctx=cv.getContext('2d');
+    const dims=prepCanvas(cv);
+    const W=dims.w,H=dims.h,mid=H/2,sc=H*.38;
+    ctx.setTransform(dims.dpr,0,0,dims.dpr,0,0);
+    ctx.clearRect(0,0,W,H);
+    updateEEGPlaybackFrame();
+    updateBandBars();
+    if (!hasRealEEG) {
+      ctx.fillStyle='rgba(255,255,255,.34)';
+      ctx.textAlign='center';
+      ctx.font='400 11px Inter, Arial';
+      ctx.fillText(eegMode === 'realtime' ? 'Waiting for Muse EEG window' : 'Loading CSV EEG window', W/2, mid+4);
+      waveRAF=requestAnimationFrame(tickWave);
+      return;
+    }
+    const series = v3BandHistory.length ? v3BandHistory : [{scores:v3Scores}];
+    const waveValue = (item, key) => {
+      const scores = item.scores || {};
+      return normBand(scores[key]);
+    };
+    [
+      ['relaxation',SCORE_COLORS.relaxation],
+      ['attention',SCORE_COLORS.attention],
+      ['stability',SCORE_COLORS.stability]
+    ].forEach(([key,col])=>{
+      ctx.strokeStyle=col; ctx.lineWidth=2.2; ctx.beginPath();
+      series.forEach((item,i)=>{
+        const v=waveValue(item,key);
+        const x=series.length===1 ? W : (i/(series.length-1))*W;
+        const y=H-6-v*(H-12);
+        if (i===0) ctx.moveTo(0,y);
+        if (series.length===1) ctx.lineTo(W,y);
+        else ctx.lineTo(x,y);
+      });
+      ctx.stroke();
+    });
+    waveRAF=requestAnimationFrame(tickWave);
+  }
+
+  /* Enter key on home input */
+document.addEventListener('DOMContentLoaded',()=>{
+    const inp=document.getElementById('v3-prompt');
+    if (inp) inp.addEventListener('keydown',e=>{ if(e.key==='Enter') submit(); });
+    if (window.lucide) window.lucide.createIcons();
+  });
+
+  document.addEventListener('DOMContentLoaded',()=>setMode(eegMode));
+  window.addEventListener('resize',()=>{ if (document.getElementById('v3-session')?.classList.contains('v3-active')) scheduleMap(); });
+
+  return {goTo, submit, togglePlay, refreshScene, setMode};
+})();
+
+function v3Submit()    { V3NS.submit(); }
+function v3GoTo(p)     { V3NS.goTo(p); }
+function v3TogglePlay(){ V3NS.togglePlay(); }
+function v3SetMode(m)  { V3NS.setMode(m); }
+</script>

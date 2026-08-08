@@ -1,0 +1,2 @@
+import { useStore } from 'zustand'; import { runtimeStore } from '../../runtime/RuntimeStore.js';
+export function LoadingPage() { const session = useStore(runtimeStore, (state) => state.sessionRuntime); return <main className="flow-page loading-page"><div className="organic-blob"><div><p>NeuroScape</p><span>{session.plannerMessage ?? session.message ?? 'Your world is under construction'}</span></div></div></main>; }

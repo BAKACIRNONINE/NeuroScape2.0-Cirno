@@ -1,0 +1,109 @@
+import { describe, expect, it } from 'vitest';
+import { EventController } from '../../src/controllers/EventController.js';
+import { TransitionController } from '../../src/controllers/TransitionController.js';
+import { RuntimeEventBus } from '../../src/events/RuntimeEvents.js';
+import { SceneGraph } from '../../src/scene-graph/SceneGraph.js';
+import { SemanticLocationMapper } from '../../src/scene-graph/SemanticLocationMapper.js';
+import { sceneGraphDefinitionFixture } from '../fixtures/phase1Fixtures.js';
+
+const listener = {
+  worldPosition: [0, 0, 0] as [number, number, number],
+  orientation: [0, 0, 0, 1] as [number, number, number, number],
+  velocity: [0, 0, 0] as [number, number, number],
+  semanticLocation: 'forest_entry',
+};
+
+function createEvents() {
+  const bus = new RuntimeEventBus();
+  const transitions = new TransitionController(bus);
+  transitions.initialize();
+  const controller = new EventController(
+    new SemanticLocationMapper(new SceneGraph(sceneGraphDefinitionFixture)),
+    transitions,
+    bus,
+  );
+  return { controller, transitions, bus };
+}
+
+const eventPlan = {
+  id: 'bird',
+  assetId: 'event.bird',
+  activationTimeMs: 1_000,
+  durationMs: 4_000,
+  trajectory: [
+    { locationId: 'forest_entry', timestampMs: 1_000 },
+    { locationId: 'clearing', timestampMs: 5_000 },
+  ],
+  gain: 0.8,
+};
+
+describe('EventController', () => {
+  it('spawns, moves continuously, finishes, and removes events', () => {
+    const { controller, transitions, bus } = createEvents();
+    controller.initialize([eventPlan], { defaultDurationMs: 1_000, curve: 'linear' });
+    controller.update(1_000, listener);
+    transitions.update(1_000);
+    expect(controller.getStates(listener)[0]).toMatchObject({ lifecycle: 'active', active: true });
+    expect(bus.history.some((event) => event.type === 'EventSpawned')).toBe(true);
+
+    controller.update(1_000, listener);
+    transitions.update(1_000);
+    const moving = controller.getStates(listener)[0]!;
+    expect(moving.worldPosition[2]).toBeLessThan(0);
+    expect(moving.worldPosition[2]).toBeGreaterThan(-6);
+    expect(moving.velocity[2]).toBeLessThan(0);
+
+    controller.update(2_000, listener);
+    transitions.update(2_000);
+    controller.update(1_000, listener);
+    transitions.update(1_000);
+    expect(controller.getStates(listener)[0]?.lifecycle).toBe('finished');
+    controller.update(0, listener);
+    expect(controller.getStates(listener)).toEqual([]);
+    expect(bus.history.some((event) => event.type === 'EventFinished')).toBe(true);
+  });
+
+  it('is frame-rate independent along a deterministic trajectory', () => {
+    const directHarness = createEvents();
+    const splitHarness = createEvents();
+    directHarness.controller.initialize([eventPlan], {
+      defaultDurationMs: 500,
+      curve: 'linear',
+    });
+    splitHarness.controller.initialize([eventPlan], {
+      defaultDurationMs: 500,
+      curve: 'linear',
+    });
+    directHarness.controller.update(1_000, listener);
+    directHarness.transitions.update(1_000);
+    directHarness.controller.update(1_500, listener);
+    directHarness.transitions.update(1_500);
+    for (let index = 0; index < 15; index += 1) {
+      splitHarness.controller.update(index === 0 ? 1_100 : 100, listener);
+      splitHarness.transitions.update(index === 0 ? 1_100 : 100);
+    }
+    expect(splitHarness.controller.getStates(listener)[0]!.worldPosition).toEqual(
+      directHarness.controller.getStates(listener)[0]!.worldPosition,
+    );
+  });
+
+  it('rebases compatible trajectory updates at the current position', () => {
+    const { controller, transitions } = createEvents();
+    controller.initialize([eventPlan], { defaultDurationMs: 100, curve: 'linear' });
+    controller.update(2_000, listener);
+    transitions.update(2_000);
+    const before = controller.getStates(listener)[0]!.worldPosition;
+    controller.merge(
+      [
+        {
+          ...eventPlan,
+          durationMs: 6_000,
+          trajectory: [{ locationId: 'stream_bank', timestampMs: 7_000 }],
+        },
+      ],
+      { defaultDurationMs: 100, curve: 'linear' },
+    );
+    controller.update(0, listener);
+    expect(controller.getStates(listener)[0]!.worldPosition).toEqual(before);
+  });
+});
