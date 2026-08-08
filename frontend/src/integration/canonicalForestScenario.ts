@@ -21,9 +21,9 @@ export const forestPlans: readonly SceneJourneyPlan[] = [
   { planId: 'forest-plan-3', planningHorizonSec: 7, reasoningSummary: 'Simulated planner output: continue toward the waterfall, reduce event activity, and preserve the stable ambient layer.', userJourney: { goal: 'Complete the journey at the waterfall', waypoints: [{ locationId: 'stream_bank', pauseDurationMs: 500 }, { locationId: 'waterfall' }] }, soundscape: { ambient: ambience('ambient.waterfall','waterfall'), action: actions, event: [{ id: 'leaves-drift', assetId: 'event.leaves', activationTimeMs: 20000, durationMs: 4500, trajectory: [{ locationId: 'stream_bank', timestampMs: 20000 }, { locationId: 'waterfall', timestampMs: 24000 }], gain: .25 }] }, transitionPolicy: { defaultDurationMs: 1600, curve: 'smoothstep' } },
 ];
 export const simulatedNeuroStates: readonly NeuroState[] = [
-  { timestampMs: 0, attention: { value:.58, trend:'stable' }, arousal:{ value:.46, trend:'stable' }, stability:.62, confidence:.9 },
-  { timestampMs: 6000, attention: { value:.63, trend:'increasing' }, arousal:{ value:.43, trend:'decreasing' }, stability:.68, confidence:.92 },
-  { timestampMs: 12000, attention: { value:.67, trend:'increasing' }, arousal:{ value:.41, trend:'stable' }, stability:.73, confidence:.93 },
-  { timestampMs: 18000, attention: { value:.7, trend:'stable' }, arousal:{ value:.39, trend:'decreasing' }, stability:.79, confidence:.94 },
-  { timestampMs: 24000, attention: { value:.68, trend:'stable' }, arousal:{ value:.38, trend:'stable' }, stability:.82, confidence:.95 },
+  { timestampMs: 0, arousal:{ value:.46, trend:'stable' }, confidence:.9 },
+  { timestampMs: 6000, arousal:{ value:.43, trend:'decreasing' }, confidence:.92 },
+  { timestampMs: 12000, arousal:{ value:.41, trend:'stable' }, confidence:.93 },
+  { timestampMs: 18000, arousal:{ value:.39, trend:'decreasing' }, confidence:.94 },
+  { timestampMs: 24000, arousal:{ value:.38, trend:'stable' }, confidence:.95 },
 ];

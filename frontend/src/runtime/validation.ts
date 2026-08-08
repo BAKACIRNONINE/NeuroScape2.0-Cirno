@@ -87,8 +87,9 @@ export function immutableCopy<T>(value: T): Readonly<T> { return deepFreeze(stru
 
 export function validateNeuroState(value: unknown): value is NeuroState {
   if (!isRecord(value) || !finite(value.timestampMs) || value.timestampMs < 0) return false;
+  if (Object.keys(value).some((key) => !['timestampMs', 'arousal', 'confidence'].includes(key))) return false;
   const metric = (candidate: unknown) => isRecord(candidate) && finite(candidate.value) && candidate.value >= 0 && candidate.value <= 1 && ['increasing', 'decreasing', 'stable'].includes(String(candidate.trend));
-  return metric(value.attention) && metric(value.arousal) && finite(value.stability) && value.stability >= 0 && value.stability <= 1 && finite(value.confidence) && value.confidence >= 0 && value.confidence <= 1 && (value.historySummary === undefined || typeof value.historySummary === 'string');
+  return metric(value.arousal) && (value.confidence === undefined || finite(value.confidence) && value.confidence >= 0 && value.confidence <= 1);
 }
 
 export function validateSceneJourneyPlan(value: unknown): value is SceneJourneyPlan {

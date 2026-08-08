@@ -34,9 +34,7 @@ export const longForestNeuroStates: readonly NeuroState[] = Array.from({ length:
   const progress = index / 12;
   return {
     timestampMs: index * 15_000,
-    attention: { value: .58 + .08 * Math.sin(progress * Math.PI), trend: index < 4 ? 'increasing' : index > 8 ? 'decreasing' : 'stable' },
     arousal: { value: .46 - .08 * progress, trend: index < 9 ? 'decreasing' : 'stable' },
-    stability: .62 + .2 * progress,
     confidence: .9 + .05 * progress,
   } satisfies NeuroState;
 });

@@ -21,7 +21,7 @@ describe('NeuroScape Module 03 → Module 04 acceptance path', () => {
     const recorder = new SessionRecorder(store); recorder.start({ sessionId:'acceptance-session', userPrompt:'Simulated forest', eegMode:'recorded' });
     const audioContext = new FakeAudioContext(), audio = new AudioEngine(store,new AudioContextManager(() => audioContext as unknown as AudioContext)); await audio.enable();
     harness.start(); const initialWorld = store.getState().runtimeWorldState; expect(initialWorld?.listener.semanticLocation).toBe('forest_entry');
-    const independentNeuro = { timestampMs:1, attention:{ value:.6, trend:'stable' }, arousal:{ value:.45, trend:'stable' }, stability:.65, confidence:.9 };
+    const independentNeuro = { timestampMs:1, arousal:{ value:.45, trend:'stable' }, confidence:.9 };
     const neuroEnvelope = parseServerMessage({ type:'NeuroState', protocolVersion:NEUROSCAPE_PROTOCOL_VERSION, sessionId:'acceptance-session', timestampMs:1, payload:independentNeuro },'acceptance-session');
     expect(neuroEnvelope.valid).toBe(true); if (neuroEnvelope.valid) dispatchServerMessage(neuroEnvelope.message,store,performance.now()); expect(store.getState().runtimeWorldState).toBe(initialWorld);
     while (harness.getState().status !== 'ended') harness.tick(250);

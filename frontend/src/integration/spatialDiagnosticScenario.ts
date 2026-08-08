@@ -45,4 +45,4 @@ export const spatialDiagnosticPlans: readonly SceneJourneyPlan[] = spatialDiagno
   soundscape:{ ambient:[], action:[], event:[...phase.events] }, transitionPolicy:{ defaultDurationMs:300, curve:'smoothstep' },
 }));
 
-export const spatialDiagnosticNeuroStates: readonly NeuroState[] = [0,30_000,60_000,90_000,120_000,150_000].map((timestampMs) => ({ timestampMs, attention:{ value:.65, trend:'stable' }, arousal:{ value:.5, trend:'stable' }, stability:.7, confidence:.95 }));
+export const spatialDiagnosticNeuroStates: readonly NeuroState[] = [0,30_000,60_000,90_000,120_000,150_000].map((timestampMs) => ({ timestampMs, arousal:{ value:.5, trend:'stable' }, confidence:.95 }));

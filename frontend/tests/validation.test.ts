@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateRuntimeWorldState } from '../src/runtime/validation.js';
+import { validateNeuroState, validateRuntimeWorldState } from '../src/runtime/validation.js';
 import { snapshot } from './fixtures.js';
 
 describe('runtime snapshot validation', () => {
@@ -12,5 +12,14 @@ describe('runtime snapshot validation', () => {
   ])('rejects %s without repairing it', (_name, mutate) => {
     const value = snapshot(); mutate(value);
     expect(validateRuntimeWorldState(value).valid).toBe(false);
+  });
+});
+
+describe('NeuroState validation', () => {
+  it('accepts Arousal with optional confidence and rejects extra fields', () => {
+    const minimal = { timestampMs:0, arousal:{ value:.5, trend:'stable' } };
+    expect(validateNeuroState(minimal)).toBe(true);
+    expect(validateNeuroState({ ...minimal, confidence:.9 })).toBe(true);
+    expect(validateNeuroState({ ...minimal, legacyMetric:.7 })).toBe(false);
   });
 });

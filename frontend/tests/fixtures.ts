@@ -11,5 +11,5 @@ export const snapshot = (timestampMs = 100): RuntimeWorldState => ({
   action: [{ id: 'breath', assetId: 'action.breath', attachment: 'chest', relativePosition: [0, -1, 0], worldPosition: [9, 8, 7], gain: 0.5, active: true }],
   event: [{ id: 'bird', assetId: 'event.bird', worldPosition: [-3, 4, -5], velocity: [1, 0, 0], gain: 0.6, lifecycle: 'active', active: true }],
 });
-export const neuroState = (timestampMs = 100): NeuroState => ({ timestampMs, attention: { value: .72, trend: 'increasing' }, arousal: { value: .41, trend: 'stable' }, stability: .81, confidence: .92, historySummary: 'Arousal remained stable.' });
+export const neuroState = (timestampMs = 100): NeuroState => ({ timestampMs, arousal: { value: .41, trend: 'stable' }, confidence: .92 });
 export const journeyPlan = (): SceneJourneyPlan => ({ planId: 'plan-1', planningHorizonSec: 120, reasoningSummary: 'Move gradually toward running water.', userJourney: { goal: 'Support sustained calm', waypoints: [{ locationId: 'clearing' }, { locationId: 'stream-bank' }] }, soundscape: { ambient: [], action: [], event: [] }, transitionPolicy: { defaultDurationMs: 4000, curve: 'smoothstep' } });

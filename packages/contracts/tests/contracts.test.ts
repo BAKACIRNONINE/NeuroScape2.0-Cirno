@@ -5,9 +5,7 @@ describe('shared contracts', () => {
   it('accepts canonical contract fixtures', () => {
     const neuroState: NeuroState = {
       timestampMs: 0,
-      attention: { value: 0.5, trend: 'stable' },
       arousal: { value: 0.4, trend: 'decreasing' },
-      stability: 0.8,
       confidence: 0.9,
     };
     const runtimeState: RuntimeWorldState = {

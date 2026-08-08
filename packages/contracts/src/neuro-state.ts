@@ -9,9 +9,6 @@ export interface NeuroMetric {
 
 export interface NeuroState {
   timestampMs: SessionTimestampMs;
-  attention: NeuroMetric;
   arousal: NeuroMetric;
-  stability: number;
-  confidence: number;
-  historySummary?: string;
+  confidence?: number;
 }

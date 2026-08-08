@@ -94,7 +94,7 @@ Supported server streams are `NeuroState`, `SceneJourneyPlan`, `RuntimeWorldStat
 
 ## Future Module 01 connection
 
-Module 01 should publish canonical `NeuroState` values normalized to `[0,1]`, with Attention, Arousal, Stability, Confidence, and supplied trends. It must use milliseconds since session start. Do not send raw EEG to this frontend contract and do not ask React to calculate neuro metrics.
+Module 01 should publish canonical `NeuroState` Arousal values normalized to `[0,1]`, with an optional Confidence value and the supplied Arousal trend. It must use milliseconds since session start. Do not send raw EEG to this frontend contract and do not ask React to calculate neuro metrics.
 
 ## Future Module 02 connection
 
