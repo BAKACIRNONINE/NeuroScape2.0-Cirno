@@ -1,0 +1,140 @@
+import type { SceneJourneyPlan } from '@neuroscape/contracts';
+import type { AdaptivePlannerConfig } from './config.js';
+import { evaluateEligibility, restrictionsFor } from './gate.js';
+import { AttentionInterpreter } from './interpreter.js';
+import { mergePlanPatch } from './plan-merge.js';
+import type {
+  AdaptationHistoryItem,
+  AdaptiveCheckpointResult,
+  AttentionState,
+  CalibrationProfile,
+  DecisionProvider,
+  PlanningProvider,
+  TbrEpoch,
+} from './types.js';
+
+export class AdaptivePlannerEngine {
+  readonly #config: AdaptivePlannerConfig;
+  readonly #profile: CalibrationProfile;
+  readonly #interpreter: AttentionInterpreter;
+  readonly #decisionProvider: DecisionProvider;
+  readonly #planningProvider: PlanningProvider;
+  readonly #checkpointStates: AttentionState[] = [];
+  readonly #history: AdaptationHistoryItem[] = [];
+  #currentPlan: SceneJourneyPlan;
+
+  constructor(options: {
+    config: AdaptivePlannerConfig;
+    profile: CalibrationProfile;
+    initialPlan: SceneJourneyPlan;
+    decisionProvider: DecisionProvider;
+    planningProvider: PlanningProvider;
+  }) {
+    this.#config = options.config;
+    this.#profile = options.profile;
+    this.#currentPlan = structuredClone(options.initialPlan);
+    this.#decisionProvider = options.decisionProvider;
+    this.#planningProvider = options.planningProvider;
+    this.#interpreter = new AttentionInterpreter(
+      options.profile,
+      options.config,
+    );
+  }
+
+  async ingest(epoch: TbrEpoch): Promise<AdaptiveCheckpointResult | null> {
+    const rawState = this.#interpreter.ingest(epoch);
+    if (!this.isCheckpoint(epoch.timestampMs)) return null;
+    const state = this.withCheckpointTrend(rawState);
+    this.#checkpointStates.push(state);
+    const eligibility = evaluateEligibility(
+      state,
+      this.#profile,
+      this.#history,
+      this.#config,
+    );
+    const result: AdaptiveCheckpointResult = { state, eligibility };
+    if (!eligibility.eligible) return result;
+    const context = {
+      state,
+      recentStates: structuredClone(this.#checkpointStates.slice(-6)),
+      currentPlan: structuredClone(this.#currentPlan),
+      history: structuredClone(this.#history),
+      restrictions: restrictionsFor(state, this.#history, this.#config),
+    };
+    const decision = await this.#decisionProvider.decide(context);
+    result.decision = decision;
+    if (!decision.shouldAdapt) return result;
+    const planning = await this.#planningProvider.plan(context, decision);
+    const plan = mergePlanPatch(
+      this.#currentPlan,
+      planning.patch,
+      state.timestampMs,
+    );
+    this.#currentPlan = plan;
+    this.#history.push({
+      timestampMs: state.timestampMs,
+      goal: decision.goal,
+      scope: decision.scope,
+      assetIds: planning.selectedAssetIds,
+      rationale: `${decision.rationale} ${planning.rationale}`,
+    });
+    result.planning = planning;
+    result.plan = structuredClone(plan);
+    return result;
+  }
+
+  get currentPlan(): SceneJourneyPlan {
+    return structuredClone(this.#currentPlan);
+  }
+  get history(): readonly AdaptationHistoryItem[] {
+    return structuredClone(this.#history);
+  }
+  get attentionStates(): readonly AttentionState[] {
+    return structuredClone(this.#interpreter.states);
+  }
+
+  private isCheckpoint(timestampMs: number): boolean {
+    if (timestampMs < this.#config.openingDurationMs) return false;
+    return (
+      (timestampMs - this.#config.openingDurationMs) %
+        this.#config.checkpointIntervalMs ===
+      0
+    );
+  }
+
+  private withCheckpointTrend(state: AttentionState): AttentionState {
+    const recent = [
+      ...this.#checkpointStates.slice(-(this.#config.trendWindowCount - 1)),
+      state,
+    ];
+    const first = recent[0]?.mindWanderingPosition;
+    const current = state.mindWanderingPosition;
+    const delta =
+      recent.length < this.#config.trendWindowCount ||
+      first === null ||
+      first === undefined ||
+      current === null
+        ? null
+        : (current - first) / (recent.length - 1);
+    const trend =
+      delta === null
+        ? 'insufficient-history'
+        : delta > this.#config.trendDeltaThreshold
+          ? 'toward-mind-wandering'
+          : delta < -this.#config.trendDeltaThreshold
+            ? 'toward-focus'
+            : 'stable';
+    const previous =
+      this.#checkpointStates.at(-1)?.sustainedMindWanderingWindows ?? 0;
+    const sustained =
+      current !== null && current >= this.#config.mindWanderingLeaningThreshold
+        ? previous + 1
+        : 0;
+    return {
+      ...state,
+      trend,
+      trendDeltaPerCheckpoint: delta,
+      sustainedMindWanderingWindows: sustained,
+    };
+  }
+}
