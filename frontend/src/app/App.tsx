@@ -1,8 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from 'zustand';
 import { liveRuntimeClient } from '../network/liveRuntime.js';
 import { runtimeStore } from '../runtime/RuntimeStore.js';
-import { HomePage, type SessionIntent } from '../ui/pages/HomePage.js';
+import {
+  HomePage,
+  type AdaptiveSessionIntent,
+  type SessionIntent,
+} from '../ui/pages/HomePage.js';
 import { LoadingPage } from '../ui/pages/LoadingPage.js';
 import { PreviewPage } from '../ui/pages/PreviewPage.js';
 import { SessionPage } from '../ui/pages/SessionPage.js';
@@ -17,9 +21,18 @@ import {
   spatialDiagnosticHarness,
 } from '../integration/IntegrationHarness.js';
 import { adaptiveIntegrationHarness } from '../integration/AdaptiveIntegrationHarness.js';
+import { audioEngine } from '../audio/AudioEngine.js';
+import {
+  createStudyArtifactBundle,
+  saveBundleToBackend,
+} from '../study/StudyArtifacts.js';
+import { studyArtifactStore } from '../study/studyArtifactStore.js';
+import { liveSessionId } from '../network/liveRuntime.js';
 
 type Page = 'home' | 'loading' | 'preview' | 'session' | 'summary';
 export function App() {
+  const finalizing = useRef(false);
+  const audioCaptureError = useRef<string | null>(null);
   const [page, setPage] = useState<Page>('home');
   const [mode, setMode] = useState<
     'live' | 'adaptive' | 'demo' | 'long-demo' | 'diagnostic' | 'replay'
@@ -42,51 +55,114 @@ export function App() {
   useEffect(() => {
     if (page === 'loading' && sessionStatus === 'preview') setPage('preview');
     if (sessionStatus === 'running') setPage('session');
-    if (sessionStatus === 'ended' && sessionRecorder.active) {
-      recordingStore.stop();
-      setPage('summary');
+    if (
+      sessionStatus === 'ended' &&
+      sessionRecorder.active &&
+      !finalizing.current
+    ) {
+      finalizing.current = true;
+      void (async () => {
+        let audio = null;
+        try {
+          audio = await audioEngine.stopRecording();
+        } catch (error) {
+          audioCaptureError.current =
+            error instanceof Error ? error.message : String(error);
+          console.error(
+            'Master-audio finalization failed; study data will still be saved.',
+            error,
+          );
+        }
+        const recording = recordingStore.stop();
+        if (recording?.metadata.participantId) {
+          const bundle = createStudyArtifactBundle(
+            recording,
+            audio,
+            audioCaptureError.current ? [audioCaptureError.current] : [],
+          );
+          studyArtifactStore.setBundle(bundle);
+          setPage('summary');
+          studyArtifactStore.setBackend({ status: 'saving' });
+          try {
+            const directory = await saveBundleToBackend(bundle);
+            studyArtifactStore.setBackend({ status: 'saved', directory });
+          } catch (error) {
+            studyArtifactStore.setBackend({
+              status: 'failed',
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        } else setPage('summary');
+        finalizing.current = false;
+      })();
     }
   }, [page, sessionStatus]);
   const start = (intent: SessionIntent) => {
     setMode('live');
-    recordingStore.start(intent.worldDescription, intent.eegSource);
+    recordingStore.start({
+      sessionId: liveSessionId,
+      userPrompt: intent.worldDescription,
+      eegMode: intent.eegSource,
+      startedAtIso: new Date().toISOString(),
+    });
     liveRuntimeClient.sendCommand({ command: 'startSession', ...intent });
     setPage('loading');
   };
   const startDemo = () => {
     liveRuntimeClient.disconnect();
     setMode('demo');
-    recordingStore.start(
-      'Deterministic forest integration scenario',
-      'recorded',
-    );
+    recordingStore.start({
+      sessionId: `demo-${Date.now()}`,
+      userPrompt: 'Deterministic forest integration scenario',
+      eegMode: 'recorded',
+      startedAtIso: new Date().toISOString(),
+    });
     integrationHarness.start();
     setPage('session');
   };
-  const startAdaptive = () => {
+  const startAdaptive = (intent: AdaptiveSessionIntent) => {
     liveRuntimeClient.disconnect();
     setMode('adaptive');
-    recordingStore.start(
-      '10-minute Module 01/02 adaptive mock replay',
-      'recorded',
-    );
-    adaptiveIntegrationHarness.start();
+    studyArtifactStore.reset();
+    audioCaptureError.current = null;
+    const sessionId = `session-${new Date().toISOString().replaceAll(/\D/g, '')}-${crypto.randomUUID().slice(0, 8)}`;
+    recordingStore.start({
+      sessionId,
+      participantId: intent.participantId,
+      runMode: intent.runMode,
+      userPrompt: '10-minute Module 01/02 adaptive mock replay',
+      eegMode: 'recorded',
+      startedAtIso: new Date().toISOString(),
+    });
+    adaptiveIntegrationHarness.start({ sessionId, runMode: intent.runMode });
     setPage('session');
+    void audioEngine.startRecording().catch((error) => {
+      audioCaptureError.current =
+        error instanceof Error ? error.message : String(error);
+      console.error('Audio capture unavailable; session will continue.', error);
+    });
   };
   const startLongDemo = () => {
     liveRuntimeClient.disconnect();
     setMode('long-demo');
-    recordingStore.start(
-      'Long forest perceptual validation scenario',
-      'recorded',
-    );
+    recordingStore.start({
+      sessionId: `long-demo-${Date.now()}`,
+      userPrompt: 'Long forest perceptual validation scenario',
+      eegMode: 'recorded',
+      startedAtIso: new Date().toISOString(),
+    });
     longIntegrationHarness.start();
     setPage('session');
   };
   const startSpatialDiagnostic = () => {
     liveRuntimeClient.disconnect();
     setMode('diagnostic');
-    recordingStore.start('Spatial event HRTF diagnostic scenario', 'recorded');
+    recordingStore.start({
+      sessionId: `diagnostic-${Date.now()}`,
+      userPrompt: 'Spatial event HRTF diagnostic scenario',
+      eegMode: 'recorded',
+      startedAtIso: new Date().toISOString(),
+    });
     spatialDiagnosticHarness.start();
     setPage('session');
   };

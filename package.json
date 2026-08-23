@@ -9,10 +9,13 @@
   "workspaces": [
     "packages/*",
     "module-03-runtime-scene-controller",
+    "study-recorder-server",
     "frontend"
   ],
   "scripts": {
-    "dev": "npm run build --workspace @neuroscape/contracts && npm run build --workspace @neuroscape/adaptive-planner && npm run build --workspace @neuroscape/runtime-scene-controller && npm run dev --workspace @neuroscape/frontend",
+    "dev": "npm run build --workspace @neuroscape/contracts && npm run build --workspace @neuroscape/adaptive-planner && npm run build --workspace @neuroscape/runtime-scene-controller && node scripts/dev.mjs",
+    "dev:frontend": "npm run dev --workspace @neuroscape/frontend",
+    "study:server": "npm run dev --workspace @neuroscape/study-recorder-server",
     "build": "npm run build --workspace @neuroscape/contracts && npm run build --workspace @neuroscape/adaptive-planner && npm run build --workspace @neuroscape/runtime-scene-controller && npm run build --workspace @neuroscape/frontend",
     "typecheck": "npm run build --workspace @neuroscape/contracts && npm run build --workspace @neuroscape/adaptive-planner && npm run build --workspace @neuroscape/runtime-scene-controller && npm run typecheck --workspaces --if-present",
     "test": "npm run build --workspace @neuroscape/contracts && npm run build --workspace @neuroscape/adaptive-planner && npm run build --workspace @neuroscape/runtime-scene-controller && npm run test --workspaces --if-present",

@@ -129,6 +129,7 @@ export function validateNeuroState(value: unknown): value is NeuroState {
   const validAttention =
     attention === undefined ||
     (isRecord(attention) &&
+      (attention.currentLogTbr === null || finite(attention.currentLogTbr)) &&
       (attention.focusPosition === null ||
         (finite(attention.focusPosition) &&
           attention.focusPosition >= 0 &&

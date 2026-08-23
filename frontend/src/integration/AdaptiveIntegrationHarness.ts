@@ -43,6 +43,11 @@ export interface AdaptiveHarnessState {
   checkpointCount: number;
   adaptationCount: number;
 }
+export type AdaptiveRunMode = 'mock-fast' | 'study-realtime';
+export interface AdaptiveHarnessStartOptions {
+  sessionId?: string;
+  runMode?: AdaptiveRunMode;
+}
 export interface AdaptiveIntervalApi {
   set(callback: () => void, milliseconds: number): unknown;
   clear(handle: unknown): void;
@@ -56,7 +61,8 @@ export class AdaptiveIntegrationHarness {
   readonly #store: RuntimeStore;
   readonly #intervals: AdaptiveIntervalApi;
   readonly #listeners = new Set<() => void>();
-  readonly #sessionId = 'adaptive-mock-session';
+  #sessionId = 'adaptive-mock-session';
+  #runMode: AdaptiveRunMode = 'mock-fast';
   #runtime: RuntimeController | null = null;
   #planner: AdaptivePlannerEngine | null = null;
   #timer: unknown;
@@ -83,8 +89,10 @@ export class AdaptiveIntegrationHarness {
     return () => this.#listeners.delete(listener);
   };
 
-  start(): void {
+  start(options: AdaptiveHarnessStartOptions = {}): void {
     this.end(false);
+    this.#sessionId = options.sessionId ?? 'adaptive-mock-session';
+    this.#runMode = options.runMode ?? 'mock-fast';
     this.#store.getState().resetSessionStreams();
     runtimeDiagnostics.reset();
     this.#runtime = this.createRuntime();
@@ -112,7 +120,10 @@ export class AdaptiveIntegrationHarness {
     this.dispatch('SessionStatus', 0, {
       status: 'running',
       elapsedTimeMs: 0,
-      message: '10-minute adaptive mock replay · 10× accelerated',
+      message:
+        this.#runMode === 'mock-fast'
+          ? '10-minute adaptive mock replay · 10× accelerated'
+          : '10-minute adaptive study replay · realtime',
     });
     this.startTimer();
     this.emit();
@@ -173,6 +184,13 @@ export class AdaptiveIntegrationHarness {
         this.#replay[this.#epochIndex]!.timestampMs <= nextTimestamp
       ) {
         const epoch = this.#replay[this.#epochIndex++]!;
+        this.trace(
+          epoch.timestampMs,
+          'eeg-epoch',
+          'deterministic',
+          `Mock log-TBR epoch ${epoch.valid ? 'accepted' : 'rejected'}`,
+          epoch,
+        );
         const result = await this.#planner.ingest(epoch);
         const state = result?.state ?? this.#planner.attentionStates.at(-1)!;
         this.dispatch(
@@ -288,6 +306,7 @@ export class AdaptiveIntegrationHarness {
       },
       confidence: state.confidence,
       attention: {
+        currentLogTbr: state.currentLogTbr,
         focusPosition: state.focusPosition,
         mindWanderingPosition: state.mindWanderingPosition,
         label: state.label,
@@ -350,7 +369,10 @@ export class AdaptiveIntegrationHarness {
     dispatchServerMessage(parsed.message, this.#store, performance.now());
   }
   private startTimer(): void {
-    this.#timer = this.#intervals.set(() => void this.tick(), 100);
+    this.#timer = this.#intervals.set(
+      () => void this.tick(),
+      this.#runMode === 'mock-fast' ? 100 : 1_000,
+    );
   }
   private clearTimer(): void {
     if (this.#timer !== undefined) this.#intervals.clear(this.#timer);

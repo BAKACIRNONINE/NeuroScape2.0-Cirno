@@ -13,6 +13,7 @@ export interface NeuroState {
   confidence?: number;
   /** Optional Module 01 detail. `arousal` remains for protocol 1.0 compatibility. */
   attention?: {
+    currentLogTbr: number | null;
     focusPosition: number | null;
     mindWanderingPosition: number | null;
     label:

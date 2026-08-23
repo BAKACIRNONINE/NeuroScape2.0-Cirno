@@ -37,6 +37,7 @@ coverage/
 # Temporary
 tmp/
 temp/
+study-results/
 
 # Mac resource forks
 ._*

@@ -223,6 +223,9 @@ export function SessionPage({
               </b>
             </span>
             <span>
+              Master audio capture <b>{audio.recordingStatus}</b>
+            </span>
+            <span>
               Rejected <b>{diagnostics.rejectedMessages}</b>
             </span>
             <span>

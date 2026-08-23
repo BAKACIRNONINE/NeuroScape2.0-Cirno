@@ -7,6 +7,8 @@ import {
   printSummary,
 } from '../../recording/recordingIO.js';
 import { recordingStore } from '../../recording/recordingStore.js';
+import { downloadStudyZip } from '../../study/StudyArtifacts.js';
+import { studyArtifactStore } from '../../study/studyArtifactStore.js';
 import {
   audioActivePeriods,
   deriveSummary,
@@ -40,6 +42,11 @@ export function SummaryPage({
     recordingStore.getState,
   );
   const recording = supplied ?? stored;
+  const artifacts = useSyncExternalStore(
+    studyArtifactStore.subscribe,
+    studyArtifactStore.getState,
+    studyArtifactStore.getState,
+  );
   const [importError, setImportError] = useState('');
   if (!recording)
     return (
@@ -91,6 +98,11 @@ export function SummaryPage({
           <button onClick={() => downloadRecording(recording)}>
             Export Recording
           </button>
+          {artifacts.bundle && (
+            <button onClick={() => void downloadStudyZip(artifacts.bundle!)}>
+              Download Study ZIP
+            </button>
+          )}
           <label>
             Import Recording
             <input
@@ -105,6 +117,24 @@ export function SummaryPage({
       </header>
       {importError && (
         <p className="summary-error">Import rejected: {importError}</p>
+      )}
+      {recording.metadata.participantId && (
+        <section className="summary-panel">
+          <h2>Study Artifacts</h2>
+          <p>
+            <strong>Participant:</strong> {recording.metadata.participantId} ·{' '}
+            <strong>Mode:</strong> {recording.metadata.runMode}
+          </p>
+          <p>
+            {artifacts.backend.status === 'saving'
+              ? 'Saving local participant folder…'
+              : artifacts.backend.status === 'saved'
+                ? `Saved automatically to ${artifacts.backend.directory}`
+                : artifacts.backend.status === 'failed'
+                  ? `Automatic local save failed: ${artifacts.backend.error}. Download Study ZIP remains available.`
+                  : 'Study bundle ready.'}
+          </p>
+        </section>
       )}
       <section className="overview-grid">
         {[

@@ -5,8 +5,8 @@ Module 01/02 Phase 1 development and test instructions: [docs/MODULE_01_02_PHASE
 NeuroScape is a neuroadaptive spatial-audio meditation runtime. Modules 03 and 04 are implemented: semantic plans become authoritative numerical world snapshots in Module 03, then Module 04 validates, visualizes, spatializes, records, and replays those snapshots in the browser.
 
 ```text
-Module 01 (future) → NeuroState ┐
-Module 02 (future) → SceneJourneyPlan → Module 03 → RuntimeWorldState
+Module 01 → NeuroState ┐
+Module 02 → SceneJourneyPlan → Module 03 → RuntimeWorldState
                               └───────────────┬───────────────┘
                                               ↓
                                Module 04 Runtime Store
@@ -22,7 +22,7 @@ npm install
 npm run dev
 ```
 
-Open the displayed Vite URL. Choose **Demo / Integration · deterministic forest** for a backend-free validation run.
+Open the displayed Vite URL. Choose the Phase 1 adaptive flow for participant-scoped mock sessions, or **Demo / Integration · deterministic forest** for a backend-free validation run. Adaptive sessions automatically save study artifacts under `study-results/` and also expose a ZIP download on the Summary page.
 
 ## Validation
 

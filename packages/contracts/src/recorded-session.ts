@@ -13,6 +13,9 @@ export interface RecordedSessionMetadata {
   endState: string;
   userPrompt?: string;
   eegMode?: 'muse' | 'recorded';
+  participantId?: string;
+  runMode?: 'mock-fast' | 'study-realtime';
+  startedAtIso?: string;
 }
 export interface TimestampedRecord<T> {
   timestampMs: number;
@@ -21,6 +24,7 @@ export interface TimestampedRecord<T> {
 export interface AdaptiveTraceRecord {
   timestampMs: number;
   kind:
+    | 'eeg-epoch'
     | 'attention-state'
     | 'eligibility'
     | 'decision-1'

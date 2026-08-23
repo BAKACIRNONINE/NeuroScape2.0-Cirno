@@ -15,6 +15,9 @@ export interface RecordingStartOptions {
   sessionId: string;
   userPrompt?: string;
   eegMode?: 'muse' | 'recorded';
+  participantId?: string;
+  runMode?: 'mock-fast' | 'study-realtime';
+  startedAtIso?: string;
 }
 export class SessionRecorder {
   readonly #store: RuntimeStore;
@@ -39,6 +42,9 @@ export class SessionRecorder {
         endState: initial.sessionRuntime.status,
         userPrompt: options.userPrompt,
         eegMode: options.eegMode,
+        participantId: options.participantId,
+        runMode: options.runMode,
+        startedAtIso: options.startedAtIso,
       },
       runtimeSnapshots: [],
       neuroStates: [],

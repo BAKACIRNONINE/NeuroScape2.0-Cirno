@@ -4,6 +4,11 @@ export interface SessionIntent {
   durationMinutes: number;
   eegSource: 'muse' | 'recorded';
 }
+export type AdaptiveRunMode = 'mock-fast' | 'study-realtime';
+export interface AdaptiveSessionIntent {
+  participantId: string;
+  runMode: AdaptiveRunMode;
+}
 export function HomePage({
   onStart,
   onAdaptiveDemo,
@@ -12,7 +17,7 @@ export function HomePage({
   onSpatialDiagnostic,
 }: {
   onStart: (intent: SessionIntent) => void;
-  onAdaptiveDemo?: () => void;
+  onAdaptiveDemo?: (intent: AdaptiveSessionIntent) => void;
   onDemo?: () => void;
   onLongDemo?: () => void;
   onSpatialDiagnostic?: () => void;
@@ -20,6 +25,10 @@ export function HomePage({
   const [worldDescription, setWorldDescription] = useState('');
   const [durationMinutes, setDuration] = useState(10);
   const [eegSource, setEegSource] = useState<'muse' | 'recorded'>('muse');
+  const [participantId, setParticipantId] = useState('P001');
+  const [adaptiveRunMode, setAdaptiveRunMode] =
+    useState<AdaptiveRunMode>('mock-fast');
+  const validParticipantId = /^[A-Za-z0-9_-]{1,64}$/.test(participantId);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (worldDescription.trim())
@@ -71,9 +80,44 @@ export function HomePage({
         minutes
       </label>
       {onAdaptiveDemo && (
-        <button className="demo-launch" onClick={onAdaptiveDemo}>
-          Phase 1 · adaptive EEG mock → spatial audio
-        </button>
+        <section className="adaptive-launch glass-panel">
+          <label>
+            Participant ID{' '}
+            <input
+              aria-label="Participant ID"
+              value={participantId}
+              onChange={(event) => setParticipantId(event.target.value.trim())}
+            />
+          </label>
+          <div className="source-toggle" aria-label="Adaptive run mode">
+            <button
+              type="button"
+              className={adaptiveRunMode === 'mock-fast' ? 'selected' : ''}
+              onClick={() => setAdaptiveRunMode('mock-fast')}
+            >
+              Fast test · 10×
+            </button>
+            <button
+              type="button"
+              className={adaptiveRunMode === 'study-realtime' ? 'selected' : ''}
+              onClick={() => setAdaptiveRunMode('study-realtime')}
+            >
+              Study · realtime
+            </button>
+          </div>
+          {!validParticipantId && (
+            <small>Use 1–64 letters, numbers, hyphens, or underscores.</small>
+          )}
+          <button
+            className="demo-launch"
+            disabled={!validParticipantId}
+            onClick={() =>
+              onAdaptiveDemo({ participantId, runMode: adaptiveRunMode })
+            }
+          >
+            Phase 1 · adaptive EEG mock → spatial audio
+          </button>
+        </section>
       )}
       {onDemo && (
         <button className="demo-launch" onClick={onDemo}>

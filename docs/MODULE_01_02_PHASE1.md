@@ -12,7 +12,12 @@ npm run dev
 
 Use Node 22 LTS. Odd-numbered Node releases such as Node 23 are not supported by the current ESLint/Vite dependency set.
 
-Open the Vite URL and choose **Phase 1 · adaptive EEG mock → spatial audio**. The 10-minute session runs at 10× speed (about one minute of wall time). Click **Audio** in the session UI to enable browser audio playback.
+Open the Vite URL, enter a participant ID, and choose one of the two Phase 1 modes:
+
+- **Fast mock test** advances the 10-minute logical session at 10× speed (about one minute of wall time). Audio clips keep their natural playback rate, so the captured mix is about one wall-clock minute.
+- **Real-time study** advances at 1× speed and captures the complete approximately 10-minute spatial-audio mix.
+
+Starting either mode enables browser audio and starts master-output capture from the same post-HRTF mix sent to the headphones. If the browser does not support `MediaRecorder`, the session continues and all non-audio study data is still saved.
 
 At session end, the existing Summary page retains the complete recording in application state. **Export Recording** downloads a versioned JSON bundle containing:
 
@@ -24,6 +29,18 @@ At session end, the existing Summary page retains the complete recording in appl
 - Module 03 runtime snapshots and session/planner events.
 
 The recording contains inspectable rationale summaries, not hidden model chain-of-thought.
+
+## Study result storage
+
+`npm run dev` starts both Vite and a minimal local study-recorder service. When an adaptive session ends, the browser uploads the finalized artifacts to:
+
+```text
+study-results/<participant-id>/<session-id>/
+```
+
+The folder contains the calibration profile, EEG epochs, attention timeline, eligibility results, Decision 1 and Decision 2 records, plans, runtime events, complete JSON session bundle, manifest, error log, completion marker, and—when capture is supported—the final spatial-audio mix (`.webm` or the browser-supported equivalent).
+
+The Summary page also offers **Download Study ZIP**. This is an independent fallback: a failed local-backend save does not prevent the ZIP download. The backend output root can be overridden with `NEUROSCAPE_RESULTS_DIR`.
 
 ## Phase 1 pipeline
 
