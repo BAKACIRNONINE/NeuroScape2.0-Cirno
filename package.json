@@ -3,13 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24"
+  },
   "workspaces": [
     "packages/*",
     "module-03-runtime-scene-controller",
     "frontend"
   ],
   "scripts": {
-    "dev": "npm run build --workspace @neuroscape/contracts && npm run build --workspace @neuroscape/adaptive-planner && npm run dev --workspace @neuroscape/frontend",
+    "dev": "npm run build --workspace @neuroscape/contracts && npm run build --workspace @neuroscape/adaptive-planner && npm run build --workspace @neuroscape/runtime-scene-controller && npm run dev --workspace @neuroscape/frontend",
     "build": "npm run build --workspace @neuroscape/contracts && npm run build --workspace @neuroscape/adaptive-planner && npm run build --workspace @neuroscape/runtime-scene-controller && npm run build --workspace @neuroscape/frontend",
     "typecheck": "npm run build --workspace @neuroscape/contracts && npm run build --workspace @neuroscape/adaptive-planner && npm run build --workspace @neuroscape/runtime-scene-controller && npm run typecheck --workspaces --if-present",
     "test": "npm run build --workspace @neuroscape/contracts && npm run build --workspace @neuroscape/adaptive-planner && npm run build --workspace @neuroscape/runtime-scene-controller && npm run test --workspaces --if-present",

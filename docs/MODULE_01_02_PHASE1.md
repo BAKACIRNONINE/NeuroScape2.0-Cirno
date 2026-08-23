@@ -5,9 +5,12 @@ This branch rebuilds Modules 01 and 02 without relying on the earlier placeholde
 ## Run
 
 ```bash
+nvm use
 npm ci
 npm run dev
 ```
+
+Use Node 22 LTS. Odd-numbered Node releases such as Node 23 are not supported by the current ESLint/Vite dependency set.
 
 Open the Vite URL and choose **Phase 1 · adaptive EEG mock → spatial audio**. The 10-minute session runs at 10× speed (about one minute of wall time). Click **Audio** in the session UI to enable browser audio playback.
 
