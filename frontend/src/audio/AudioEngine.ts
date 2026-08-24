@@ -40,7 +40,7 @@ export class AudioEngine {
   #captureStartedAtMs = 0;
   #state: AudioEngineState = {
     status: 'disabled',
-    masterGain: 0.8,
+    masterGain: 1,
     sourceCount: 0,
     recordingStatus: 'idle',
   };

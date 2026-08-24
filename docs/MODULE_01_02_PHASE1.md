@@ -51,7 +51,7 @@ The Summary page also offers **Download Study ZIP**. This is an independent fall
 
 ## Phase 1 pipeline
 
-1. `createMockTbrReplay()` emits one quality-annotated log-TBR epoch every 10 session seconds.
+1. Study mode consumes non-overlapping live Muse windows from the calibration service; mock mode uses `createMockTbrReplay()`. Both produce one quality-annotated log-TBR epoch every 10 session seconds.
 2. `AttentionInterpreter` applies the individual calibration anchors and computes current state, trend, variability, duration, confidence, and phase.
 3. `evaluateEligibility()` checks only hard prerequisites: calibration usability, phase, valid-window count, confidence, and cooldown.
 4. `OpenAIDecisionProvider` calls the local backend for Decision 1 (`Should adapt?`) using GPT-5.6 with low reasoning effort.
@@ -66,19 +66,19 @@ Decision 2 is never called when Decision 1 returns maintain.
 
 `packages/contracts/src/audio_library.json` is the shared authored source of truth. Module 04 derives canonical `asset_id → /audio/<asset_ref>` loading entries from it, while Decision 2 receives deterministically retrieved, scene-compatible candidates containing the authored descriptions, tags, intensity, suddenness, recommended volume/distance, use/avoid conditions, spatial behavior, default position, `default_motion.duration`, event lifecycle, fades, loop status, and priority.
 
-The Decision 2 prompt forbids invented assets and numbers. The engine rejects any selected asset ID that was not in the retrieved candidate set. Existing dotted asset IDs remain temporary aliases only for older Module 03/04 demonstrations.
+The Decision 2 prompt forbids invented assets and numbers. The engine rejects any selected asset ID that was not in the retrieved candidate set. For a restrained but perceptibly layered response, a within-scene reorientation may combine ambient and event candidates, grounding may combine ambient and action candidates, and a scene transition may combine ambient and event candidates. Each patch remains limited to at most one salient event or one body-anchored action. Authored event motion duration and recommended gain are enforced by the output schema and validated again locally. Existing dotted asset IDs remain temporary aliases only for older Module 03/04 demonstrations.
 
 The `MockDecisionProvider` and `MockPlanningProvider` remain available behind the **Offline mock** option. Decision 2 is never called when Decision 1 returns maintain. An API failure is logged as `llm-error`; the runtime maintains the current soundscape rather than silently switching to mock reasoning.
 
 ## Replacement seams for later phases
 
-| Phase 1 component        | Later replacement               | Stable interface       |
-| ------------------------ | ------------------------------- | ---------------------- |
-| `mockCalibrationProfile` | calibration repo output adapter | `CalibrationProfile`   |
-| `createMockTbrReplay()`  | Muse/live EEG stream            | `TbrEpoch`             |
-| `OpenAIDecisionProvider` | production endpoint/deployment  | `DecisionProvider`     |
-| `OpenAIPlanningProvider` | production endpoint/deployment  | `PlanningProvider`     |
-| `phase1SoundKnowledge`   | production audio database       | asset metadata records |
+| Phase 1 component        | Later replacement                    | Stable interface       |
+| ------------------------ | ------------------------------------ | ---------------------- |
+| `mockCalibrationProfile` | imported calibration profile adapter | `CalibrationProfile`   |
+| `createMockTbrReplay()`  | imported Muse OSC live epoch stream  | `TbrEpoch`             |
+| `OpenAIDecisionProvider` | production endpoint/deployment       | `DecisionProvider`     |
+| `OpenAIPlanningProvider` | production endpoint/deployment       | `PlanningProvider`     |
+| `phase1SoundKnowledge`   | production audio database            | asset metadata records |
 
 ## Eligibility design rationale
 
@@ -95,7 +95,7 @@ All values below are runnable hypotheses centralized in `packages/adaptive-plann
 | Closing phase start         |           540 s | closing experience       |
 | EEG epoch                   |            10 s | signal stability/latency |
 | Analysis window             |            60 s | state stability          |
-| Planning checkpoint         |            40 s | responsiveness/cost      |
+| Planning checkpoint         |            30 s | responsiveness/cost      |
 | Minimum valid epochs        |               5 | quality tolerance        |
 | Trend history               |   3 checkpoints | trend reliability        |
 | Focus/intermediate boundary |            0.34 | pilot distribution       |
@@ -104,12 +104,12 @@ All values below are runnable hypotheses centralized in `packages/adaptive-plann
 | High variability MAD        |            0.12 | pilot distribution       |
 | Sustained duration          |   2 checkpoints | intervention sensitivity |
 | Minimum confidence          |            0.60 | quality policy           |
-| General adaptation cooldown |            80 s | perceptual density       |
-| Scene transition cooldown   |           200 s | narrative continuity     |
-| Maximum scene transitions   |       2/session | study design             |
-| Exact asset cooldown        |           120 s | repetition tolerance     |
-| Asset-family cooldown       |            60 s | library diversity        |
-| Body-anchor cooldown        |           100 s | repetition tolerance     |
+| General adaptation cooldown |            60 s | perceptual density       |
+| Scene transition cooldown   |           180 s | narrative continuity     |
+| Maximum scene transitions   |       5/session | study design             |
+| Exact asset cooldown        |            90 s | repetition tolerance     |
+| Asset-family cooldown       |            45 s | library diversity        |
+| Body-anchor cooldown        |            80 s | repetition tolerance     |
 
 ## Verification
 

@@ -1,7 +1,27 @@
 import { spawn } from 'node:child_process';
 
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const calibrationPython =
+  process.env.NEUROSCAPE_PYTHON ??
+  (process.platform === 'win32'
+    ? 'eeg-calibration/.venv/Scripts/python.exe'
+    : 'eeg-calibration/.venv/bin/python');
 const children = [
+  spawn(
+    calibrationPython,
+    [
+      '-m',
+      'uvicorn',
+      'app.main:app',
+      '--app-dir',
+      'eeg-calibration/backend',
+      '--host',
+      '127.0.0.1',
+      '--port',
+      '8000',
+    ],
+    { stdio: 'inherit' },
+  ),
   spawn(npm, ['run', 'study:server'], { stdio: 'inherit' }),
   spawn(npm, ['run', 'dev:frontend'], { stdio: 'inherit' }),
 ];

@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { AdaptiveIntegrationHarness } from '../src/integration/AdaptiveIntegrationHarness.js';
+import {
+  createMockTbrReplay,
+  mockCalibrationProfile,
+} from '@neuroscape/adaptive-planner';
 import { recordingStore } from '../src/recording/recordingStore.js';
 import { runtimeStore } from '../src/runtime/RuntimeStore.js';
 
@@ -48,5 +52,46 @@ describe('Phase 1 adaptive end-to-end harness', () => {
       ),
     ).toBe(true);
     expect(recording?.runtimeSnapshots.at(-1)?.timestampMs).toBe(600_000);
+  });
+
+  it('accepts a participant profile and live EEG epoch source', async () => {
+    const replay = createMockTbrReplay();
+    let index = 0;
+    let polls = 0;
+    const harness = new AdaptiveIntegrationHarness(runtimeStore, {
+      set: () => 1,
+      clear: () => undefined,
+    });
+    recordingStore.start({
+      sessionId: 'adaptive-live-e2e',
+      participantId: 'P1',
+      runMode: 'study-realtime',
+      plannerMode: 'mock',
+      userPrompt: 'adaptive live e2e test',
+      eegMode: 'muse',
+      calibrationProfile: mockCalibrationProfile,
+    });
+    harness.start({
+      sessionId: 'adaptive-live-e2e',
+      runMode: 'study-realtime',
+      plannerMode: 'mock',
+      calibrationProfile: mockCalibrationProfile,
+      epochSource: {
+        next: async () => {
+          polls += 1;
+          return polls % 10 === 0 ? (replay[index++] ?? null) : null;
+        },
+      },
+    });
+    for (let tick = 0; tick < 600; tick += 1) await harness.tick(1_000);
+    const recording = recordingStore.stop();
+    expect(recording?.calibrationProfile?.profileId).toBe(
+      mockCalibrationProfile.profileId,
+    );
+    expect(
+      recording?.adaptiveTrace.some(
+        (entry) => entry.kind === 'eeg-epoch' && entry.source === 'live-eeg',
+      ),
+    ).toBe(true);
   });
 });

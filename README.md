@@ -21,12 +21,50 @@ Module 02 → SceneJourneyPlan → Module 03 → RuntimeWorldState
 
 ```bash
 npm install
+npm run calibration:setup
 npm run dev
 ```
 
+Python 3.11+ is required for Muse calibration and live EEG. See
+[Muse calibration and live adaptive integration](docs/EEG_CALIBRATION_LIVE_INTEGRATION.md)
+for Mind Monitor setup, profile handoff, and the live 10-second epoch pipeline.
+The existing mock modes remain available without EEG hardware.
+
 Put `OPENAI_API_KEY` in a repository-root `.env` file (see `.env.example`). `npm run dev` loads it only in the localhost backend; the key is never bundled into Vite or sent to the browser.
 
-Open the displayed Vite URL. Choose the Phase 1 adaptive flow, then select **OpenAI · GPT-5.6** for real Decision 1/2 reasoning or **Offline mock** for a no-cost deterministic check. Adaptive sessions automatically save study artifacts under `study-results/` and also expose a ZIP download on the Summary page.
+Open the displayed Vite URL, enter a participant ID and duration, then select
+**Start Muse calibration**. Development-only mock and diagnostic entry points
+remain under the collapsed **Developer tools** section. Adaptive sessions
+automatically save study artifacts under `study-results/` and also expose a ZIP
+download on the Summary page.
+
+## Set up on another computer
+
+Install Git, Node.js 20.19+ (Node 22 LTS recommended), npm, and Python 3.11+.
+Then run:
+
+```bash
+git clone -b feature/module-01-02-rebuild https://github.com/yujianing0210/NeuroScape2.0.git
+cd NeuroScape2.0
+npm install
+npm run calibration:setup
+cp .env.example .env
+```
+
+Edit `.env` and replace `your_openai_api_key_here` with a valid API key. Start
+all three local services with:
+
+```bash
+npm run dev
+```
+
+Open the Vite URL printed in the terminal (normally `http://localhost:5173`).
+For real EEG, connect the Mind Monitor phone and computer to a private Wi-Fi
+that permits device-to-device UDP. In Mind Monitor, enable RAW EEG and OSC
+streaming, then use the IPv4 address shown on the calibration page and UDP port
+`5000`. macOS/Windows may ask for permission for Python to accept incoming
+network traffic; allow it. Do not copy another researcher's `.env`, `.venv`,
+`study-results`, or `eeg-calibration/data/sessions` directories.
 
 ## Validation
 

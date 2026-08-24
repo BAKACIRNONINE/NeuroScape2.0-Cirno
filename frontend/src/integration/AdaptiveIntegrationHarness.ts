@@ -10,6 +10,8 @@ import {
   phase1Config,
   type AdaptiveCheckpointResult,
   type AttentionState,
+  type CalibrationProfile,
+  type TbrEpoch,
 } from '@neuroscape/adaptive-planner';
 import {
   NEUROSCAPE_PROTOCOL_VERSION,
@@ -50,6 +52,12 @@ export interface AdaptiveHarnessStartOptions {
   sessionId?: string;
   runMode?: AdaptiveRunMode;
   plannerMode?: 'openai' | 'mock';
+  calibrationProfile?: CalibrationProfile;
+  epochSource?: AdaptiveEpochSource;
+  sessionDurationMs?: number;
+}
+export interface AdaptiveEpochSource {
+  next(): Promise<TbrEpoch | null>;
 }
 export interface AdaptiveIntervalApi {
   set(callback: () => void, milliseconds: number): unknown;
@@ -73,6 +81,8 @@ export class AdaptiveIntegrationHarness {
   #busy = false;
   #epochIndex = 0;
   #replay = createMockTbrReplay();
+  #epochSource: AdaptiveEpochSource | null = null;
+  #sessionDurationMs = phase1Config.sessionDurationMs;
   #state: AdaptiveHarnessState = {
     status: 'idle',
     timestampMs: 0,
@@ -98,12 +108,15 @@ export class AdaptiveIntegrationHarness {
     this.#sessionId = options.sessionId ?? 'adaptive-mock-session';
     this.#runMode = options.runMode ?? 'mock-fast';
     this.#plannerMode = options.plannerMode ?? 'openai';
+    this.#epochSource = options.epochSource ?? null;
+    this.#sessionDurationMs =
+      options.sessionDurationMs ?? phase1Config.sessionDurationMs;
     this.#store.getState().resetSessionStreams();
     runtimeDiagnostics.reset();
     this.#runtime = this.createRuntime();
     this.#planner = new AdaptivePlannerEngine({
       config: phase1Config,
-      profile: mockCalibrationProfile,
+      profile: options.calibrationProfile ?? mockCalibrationProfile,
       initialPlan: initialForestPlan,
       decisionProvider:
         this.#plannerMode === 'openai'
@@ -133,8 +146,10 @@ export class AdaptiveIntegrationHarness {
       elapsedTimeMs: 0,
       message:
         this.#runMode === 'mock-fast'
-          ? '10-minute adaptive mock replay · 10× accelerated'
-          : '10-minute adaptive study replay · realtime',
+          ? `${this.#sessionDurationMs / 60_000}-minute adaptive mock replay · 10× accelerated`
+          : this.#epochSource
+            ? `${this.#sessionDurationMs / 60_000}-minute adaptive session · live Muse EEG`
+            : `${this.#sessionDurationMs / 60_000}-minute adaptive study replay · realtime`,
     });
     this.startTimer();
     this.emit();
@@ -187,19 +202,26 @@ export class AdaptiveIntegrationHarness {
     this.#busy = true;
     try {
       const nextTimestamp = Math.min(
-        phase1Config.sessionDurationMs,
+        this.#sessionDurationMs,
         this.#state.timestampMs + deltaTimeMs,
       );
-      while (
-        this.#epochIndex < this.#replay.length &&
-        this.#replay[this.#epochIndex]!.timestampMs <= nextTimestamp
-      ) {
-        const epoch = this.#replay[this.#epochIndex++]!;
+      const epochs: TbrEpoch[] = [];
+      if (this.#epochSource) {
+        const epoch = await this.#epochSource.next();
+        if (epoch) epochs.push(epoch);
+      } else {
+        while (
+          this.#epochIndex < this.#replay.length &&
+          this.#replay[this.#epochIndex]!.timestampMs <= nextTimestamp
+        )
+          epochs.push(this.#replay[this.#epochIndex++]!);
+      }
+      for (const epoch of epochs) {
         this.trace(
           epoch.timestampMs,
           'eeg-epoch',
-          'deterministic',
-          `Mock log-TBR epoch ${epoch.valid ? 'accepted' : 'rejected'}`,
+          this.#epochSource ? 'live-eeg' : 'deterministic',
+          `${this.#epochSource ? 'Live Muse' : 'Mock'} log-TBR epoch ${epoch.valid ? 'accepted' : 'rejected'}`,
           epoch,
         );
         let result: AdaptiveCheckpointResult | null = null;
@@ -237,11 +259,13 @@ export class AdaptiveIntegrationHarness {
       this.dispatch('SessionStatus', snapshot.timestampMs, {
         status: 'running',
         elapsedTimeMs: snapshot.timestampMs,
-        message: 'Adaptive mock replay',
+        message: this.#epochSource
+          ? 'Adaptive live Muse session'
+          : 'Adaptive mock replay',
       });
       this.#state = { ...this.#state, timestampMs: snapshot.timestampMs };
       this.emit();
-      if (snapshot.timestampMs >= phase1Config.sessionDurationMs) this.end();
+      if (snapshot.timestampMs >= this.#sessionDurationMs) this.end();
     } finally {
       this.#busy = false;
     }

@@ -27,7 +27,7 @@ describe('shared contracts', () => {
   });
 
   it('loads the canonical authored audio library including motion durations', () => {
-    expect(audioLibrary).toHaveLength(16);
+    expect(audioLibrary).toHaveLength(24);
     expect(
       audioLibrary.find((asset) => asset.asset_id === 'forest_bird_far_01')
         ?.default_motion.duration,
@@ -41,5 +41,15 @@ describe('shared contracts', () => {
         (asset) => asset.asset_id === 'forest_leaf_rustle_mid_01',
       )?.auto_delete_after_sec,
     ).toBe(7);
+    expect(
+      audioLibrary.find(
+        (asset) => asset.asset_id === 'forest_stream_ambient_bed_01',
+      )?.asset_ref,
+    ).toBe('forest/ambient/forest_stream_ambient_bed_01.mp3');
+    expect(
+      audioLibrary.find(
+        (asset) => asset.asset_id === 'forest_body_slow_creek_steps_01',
+      )?.asset_ref,
+    ).toBe('forest/action/forest_body_slow_creek_steps_01.wav');
   });
 });

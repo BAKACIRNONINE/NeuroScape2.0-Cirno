@@ -5,6 +5,7 @@ import { runtimeStore } from '../runtime/RuntimeStore.js';
 import {
   HomePage,
   type AdaptiveSessionIntent,
+  type CalibrationSessionIntent,
   type SessionIntent,
 } from '../ui/pages/HomePage.js';
 import { LoadingPage } from '../ui/pages/LoadingPage.js';
@@ -28,12 +29,24 @@ import {
 } from '../study/StudyArtifacts.js';
 import { studyArtifactStore } from '../study/studyArtifactStore.js';
 import { liveSessionId } from '../network/liveRuntime.js';
+import { CalibrationPage } from '../calibration/CalibrationPage.js';
+import {
+  LiveEegEpochSource,
+  toPlannerCalibrationProfile,
+} from '../calibration/integration.js';
+import type { Profile } from '../calibration/types.js';
 
-type Page = 'home' | 'loading' | 'preview' | 'session' | 'summary';
+type Page =
+  'home' | 'calibration' | 'loading' | 'preview' | 'session' | 'summary';
 export function App() {
   const finalizing = useRef(false);
   const audioCaptureError = useRef<string | null>(null);
   const [page, setPage] = useState<Page>('home');
+  const [calibrationIntent, setCalibrationIntent] =
+    useState<CalibrationSessionIntent>({
+      participantId: 'P001',
+      durationMinutes: 10,
+    });
   const [mode, setMode] = useState<
     'live' | 'adaptive' | 'demo' | 'long-demo' | 'diagnostic' | 'replay'
   >('live');
@@ -164,6 +177,49 @@ export function App() {
       console.error('Audio capture unavailable; session will continue.', error);
     });
   };
+  const startCalibratedAdaptive = async (profile: Profile) => {
+    try {
+      const response = await fetch('/api/llm/health');
+      const health = (await response.json()) as { configured?: boolean };
+      if (!response.ok || !health.configured)
+        throw new Error(
+          'OpenAI planner is not configured. Add OPENAI_API_KEY and restart npm run dev.',
+        );
+      const epochSource = new LiveEegEpochSource();
+      await epochSource.start();
+      const plannerProfile = toPlannerCalibrationProfile(profile);
+      liveRuntimeClient.disconnect();
+      setMode('adaptive');
+      studyArtifactStore.reset();
+      audioCaptureError.current = null;
+      const sessionId = `session-${new Date().toISOString().replaceAll(/\D/g, '')}-${crypto.randomUUID().slice(0, 8)}`;
+      recordingStore.start({
+        sessionId,
+        participantId: profile.participant_id,
+        runMode: 'study-realtime',
+        plannerMode: 'openai',
+        userPrompt: `${calibrationIntent.durationMinutes}-minute adaptive session · live Muse EEG · calibration ${profile.session_id}`,
+        eegMode: 'muse',
+        startedAtIso: new Date().toISOString(),
+        calibrationProfile: plannerProfile,
+      });
+      adaptiveIntegrationHarness.start({
+        sessionId,
+        runMode: 'study-realtime',
+        plannerMode: 'openai',
+        sessionDurationMs: calibrationIntent.durationMinutes * 60_000,
+        calibrationProfile: plannerProfile,
+        epochSource,
+      });
+      setPage('session');
+      void audioEngine.startRecording().catch((error) => {
+        audioCaptureError.current =
+          error instanceof Error ? error.message : String(error);
+      });
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    }
+  };
   const startLongDemo = () => {
     liveRuntimeClient.disconnect();
     setMode('long-demo');
@@ -196,6 +252,17 @@ export function App() {
         onDemo={startDemo}
         onLongDemo={startLongDemo}
         onSpatialDiagnostic={startSpatialDiagnostic}
+        onCalibration={(intent) => {
+          setCalibrationIntent(intent);
+          setPage('calibration');
+        }}
+      />
+    );
+  if (page === 'calibration')
+    return (
+      <CalibrationPage
+        initialParticipantId={calibrationIntent.participantId}
+        onContinue={startCalibratedAdaptive}
       />
     );
   if (page === 'loading') return <LoadingPage />;

@@ -15,6 +15,8 @@
   "scripts": {
     "dev": "npm run build --workspace @neuroscape/contracts && npm run build --workspace @neuroscape/adaptive-planner && npm run build --workspace @neuroscape/runtime-scene-controller && node scripts/dev.mjs",
     "dev:frontend": "npm run dev --workspace @neuroscape/frontend",
+    "calibration:server": "eeg-calibration/.venv/bin/python -m uvicorn app.main:app --app-dir eeg-calibration/backend --host 127.0.0.1 --port 8000",
+    "calibration:setup": "node scripts/setup-calibration.mjs",
     "study:server": "npm run dev --workspace @neuroscape/study-recorder-server",
     "build": "npm run build --workspace @neuroscape/contracts && npm run build --workspace @neuroscape/adaptive-planner && npm run build --workspace @neuroscape/runtime-scene-controller && npm run build --workspace @neuroscape/frontend",
     "typecheck": "npm run build --workspace @neuroscape/contracts && npm run build --workspace @neuroscape/adaptive-planner && npm run build --workspace @neuroscape/runtime-scene-controller && npm run typecheck --workspaces --if-present",

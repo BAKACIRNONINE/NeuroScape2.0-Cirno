@@ -3,6 +3,7 @@ import {
   RECORDED_SESSION_SCHEMA_VERSION,
   type AdaptiveTraceRecord,
   type RecordedSession,
+  type RecordedCalibrationProfile,
   type SessionStatusPayload,
 } from '@neuroscape/contracts';
 import type {
@@ -19,6 +20,7 @@ export interface RecordingStartOptions {
   runMode?: 'mock-fast' | 'study-realtime';
   plannerMode?: 'openai' | 'mock';
   startedAtIso?: string;
+  calibrationProfile?: RecordedCalibrationProfile;
 }
 export class SessionRecorder {
   readonly #store: RuntimeStore;
@@ -48,6 +50,9 @@ export class SessionRecorder {
         plannerMode: options.plannerMode,
         startedAtIso: options.startedAtIso,
       },
+      calibrationProfile: options.calibrationProfile
+        ? structuredClone(options.calibrationProfile)
+        : undefined,
       runtimeSnapshots: [],
       neuroStates: [],
       sceneJourneyPlans: [],

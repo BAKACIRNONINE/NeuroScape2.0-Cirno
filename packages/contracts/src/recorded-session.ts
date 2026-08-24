@@ -18,6 +18,15 @@ export interface RecordedSessionMetadata {
   plannerMode?: 'openai' | 'mock';
   startedAtIso?: string;
 }
+export interface RecordedCalibrationProfile {
+  profileId: string;
+  focusedAnchorLogTbr: number;
+  mindWanderingAnchorLogTbr: number;
+  pooledMad: number;
+  mappingAvailable: boolean;
+  qualityStatus: 'pass' | 'provisional' | 'fail';
+  featureVersion: string;
+}
 export interface TimestampedRecord<T> {
   timestampMs: number;
   value: T;
@@ -32,12 +41,13 @@ export interface AdaptiveTraceRecord {
     | 'decision-2'
     | 'llm-error'
     | 'plan-applied';
-  source: 'deterministic' | 'mock-llm' | 'openai';
+  source: 'deterministic' | 'live-eeg' | 'mock-llm' | 'openai';
   summary: string;
   data: Record<string, unknown>;
 }
 export interface RecordedSession {
   metadata: RecordedSessionMetadata;
+  calibrationProfile?: RecordedCalibrationProfile;
   runtimeSnapshots: RuntimeWorldState[];
   neuroStates: NeuroState[];
   sceneJourneyPlans: TimestampedRecord<SceneJourneyPlan>[];

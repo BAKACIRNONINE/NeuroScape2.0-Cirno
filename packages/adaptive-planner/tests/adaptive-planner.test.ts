@@ -27,7 +27,7 @@ describe('adaptive planner Phase 1', () => {
       if (result) checkpoints.push(result);
     }
     expect(checkpoints[0]?.state.timestampMs).toBe(60_000);
-    expect(checkpoints.at(-1)?.state.timestampMs).toBe(580_000);
+    expect(checkpoints.at(-1)?.state.timestampMs).toBe(600_000);
     expect(checkpoints.at(-1)?.eligibility.reasons).toContain('closing_phase');
     expect(checkpoints.some((item) => item.decision?.shouldAdapt)).toBe(true);
     expect(checkpoints.some((item) => item.plan?.soundscape.event.length)).toBe(

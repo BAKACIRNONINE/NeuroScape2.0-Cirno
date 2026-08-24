@@ -9,7 +9,14 @@ import type {
   PlanningResult,
 } from './types.js';
 
-export const DECISION_2_PROMPT_VERSION = 'decision-2-audio-library-v1';
+export const DECISION_2_PROMPT_VERSION = 'decision-2-audio-library-v3';
+
+function authoredEventDurationMs(candidate: Decision2Candidate): number {
+  return (
+    (candidate.defaultMotion.durationSec ?? candidate.autoDeleteAfterSec ?? 0) *
+    1_000
+  );
+}
 
 const locationScene: Readonly<Record<string, string>> = Object.freeze({
   forest_entry: 'forest',
@@ -51,11 +58,23 @@ function allowedLayers(
   decision: AdaptationDecision,
   context: DecisionContext,
 ): Set<AudioLibraryAsset['layer']> {
-  if (decision.scope === 'scene-transition') return new Set(['ambient']);
-  if (decision.goal === 'support-grounding')
-    return new Set(context.restrictions.allowBodyAnchor ? ['action'] : []);
-  if (decision.goal === 'reduce-stimulation') return new Set(['ambient']);
-  return new Set(context.restrictions.allowEvent ? ['event'] : []);
+  if (decision.scope === 'scene-transition') {
+    return new Set(['ambient', 'event']);
+  }
+
+  if (decision.goal === 'support-grounding') {
+    return new Set(
+      context.restrictions.allowBodyAnchor
+        ? ['ambient', 'action']
+        : ['ambient'],
+    );
+  }
+
+  if (decision.goal === 'reduce-stimulation') {
+    return new Set(['ambient']);
+  }
+
+  return new Set(['ambient', 'event']);
 }
 
 function candidateFromAsset(asset: AudioLibraryAsset): Decision2Candidate {
@@ -196,10 +215,10 @@ export function buildDecision2Prompt(
   };
   return [
     'You are NeuroScape Decision 2: How to Adapt.',
-    'Plan a minimal, neuro-informed soundscape patch that realizes the supplied Decision 1 goal and scope.',
+    'Plan a restrained but perceptibly layered, neuro-informed soundscape patch that realizes the supplied Decision 1 goal and scope. When appropriate, combine one subtle ambient adjustment with at most one event or body-anchored action.',
     'Use only assetId values in candidates. Never invent an asset, location, motion, duration, gain, or numerical range.',
     'Treat candidate metadata as authoritative: description, scene, layer, tags, loop, intensity, suddenness, useWhen, avoidWhen, spatialBehavior, defaultPosition, defaultMotion.durationSec, autoDeleteAfterSec, fades, and recommendedVolume.',
-    'defaultMotion.durationSec is the authored duration of the default spatial motion. autoDeleteAfterSec is the authored event lifecycle. A looping asset may remain active until a later patch removes it.',
+    'For an event, durationMs MUST equal defaultMotion.durationSec * 1000 when defaultMotion.durationSec is non-null; otherwise it MUST equal autoDeleteAfterSec * 1000. autoDeleteAfterSec is only the fallback lifecycle when no authored motion duration exists. A looping asset may remain active until a later patch removes it.',
     'Prefer an unused compatible variant and respect the already-applied exact-asset and family cooldown filtering.',
     'Add at most one new salient event in one patch. Event-source movement is not listener movement. A body-anchored action does not require a scene transition. Footsteps imply listener movement only when explicitly assigned a locomotion role.',
     'For within-scene adaptation, preserve the listener location and semantic scene. For scene-transition scope, preserve narrative continuity and use only scene-compatible candidates.',
@@ -222,12 +241,119 @@ export function buildDecision2OutputSchema(
     ...(locationNeighbors[currentLocation] ?? []),
   ];
   const sourceLocations = Object.keys(locationScene);
+  const ambientCandidates = candidates.filter(
+    (candidate) => candidate.layer === 'ambient',
+  );
+  const actionCandidates = candidates.filter(
+    (candidate) => candidate.layer === 'action',
+  );
+  const eventCandidates = candidates.filter(
+    (candidate) => candidate.layer === 'event',
+  );
   const vector3 = {
     type: 'array',
     items: { type: 'number' },
     minItems: 3,
     maxItems: 3,
   };
+  const emptyItemSchema = {
+    type: 'object',
+    additionalProperties: false,
+    required: [],
+    properties: {},
+  };
+  const ambientItemSchema = ambientCandidates.length
+    ? {
+        anyOf: ambientCandidates.map((candidate) => ({
+          type: 'object',
+          additionalProperties: false,
+          required: ['id', 'assetId', 'mode', 'locationId', 'gain', 'active'],
+          properties: {
+            id: { type: 'string' },
+            assetId: { type: 'string', enum: [candidate.assetId] },
+            mode: { type: 'string', enum: ['global', 'localized'] },
+            locationId: {
+              anyOf: [
+                { type: 'null' },
+                { type: 'string', enum: sourceLocations },
+              ],
+            },
+            gain: { type: 'number', enum: [candidate.recommendedVolume] },
+            active: { type: 'boolean' },
+          },
+        })),
+      }
+    : emptyItemSchema;
+  const actionItemSchema = actionCandidates.length
+    ? {
+        anyOf: actionCandidates.map((candidate) => ({
+          type: 'object',
+          additionalProperties: false,
+          required: [
+            'id',
+            'assetId',
+            'attachment',
+            'relativePosition',
+            'gain',
+            'active',
+          ],
+          properties: {
+            id: { type: 'string' },
+            assetId: { type: 'string', enum: [candidate.assetId] },
+            attachment: {
+              type: 'string',
+              enum: ['head', 'chest', 'feet', 'body'],
+            },
+            relativePosition: vector3,
+            gain: { type: 'number', enum: [candidate.recommendedVolume] },
+            active: { type: 'boolean' },
+          },
+        })),
+      }
+    : emptyItemSchema;
+  const eventItemSchema = eventCandidates.length
+    ? {
+        anyOf: eventCandidates.map((candidate) => ({
+          type: 'object',
+          additionalProperties: false,
+          required: [
+            'id',
+            'assetId',
+            'activationTimeMs',
+            'durationMs',
+            'trajectory',
+            'gain',
+          ],
+          properties: {
+            id: { type: 'string' },
+            assetId: { type: 'string', enum: [candidate.assetId] },
+            activationTimeMs: { type: 'number', minimum: 0 },
+            durationMs: {
+              type: 'number',
+              enum: [authoredEventDurationMs(candidate)],
+            },
+            trajectory: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 3,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['locationId', 'timestampMs'],
+                properties: {
+                  locationId: { type: 'string', enum: sourceLocations },
+                  timestampMs: { type: 'number', minimum: 0 },
+                },
+              },
+            },
+            gain: {
+              type: 'number',
+              enum: [candidate.recommendedVolume],
+            },
+          },
+        })),
+      }
+    : emptyItemSchema;
   return {
     name: 'neuroscape_decision_2',
     strict: true,
@@ -281,96 +407,18 @@ export function buildDecision2OutputSchema(
             },
             upsertAmbient: {
               type: 'array',
-              maxItems: 2,
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                required: [
-                  'id',
-                  'assetId',
-                  'mode',
-                  'locationId',
-                  'gain',
-                  'active',
-                ],
-                properties: {
-                  id: { type: 'string' },
-                  assetId: { type: 'string', enum: assetIds },
-                  mode: { type: 'string', enum: ['global', 'localized'] },
-                  locationId: {
-                    anyOf: [
-                      { type: 'null' },
-                      { type: 'string', enum: sourceLocations },
-                    ],
-                  },
-                  gain: { type: 'number', minimum: 0, maximum: 1 },
-                  active: { type: 'boolean' },
-                },
-              },
+              maxItems: ambientCandidates.length ? 2 : 0,
+              items: ambientItemSchema,
             },
             upsertAction: {
               type: 'array',
-              maxItems: 1,
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                required: [
-                  'id',
-                  'assetId',
-                  'attachment',
-                  'relativePosition',
-                  'gain',
-                  'active',
-                ],
-                properties: {
-                  id: { type: 'string' },
-                  assetId: { type: 'string', enum: assetIds },
-                  attachment: {
-                    type: 'string',
-                    enum: ['head', 'chest', 'feet', 'body'],
-                  },
-                  relativePosition: vector3,
-                  gain: { type: 'number', minimum: 0, maximum: 1 },
-                  active: { type: 'boolean' },
-                },
-              },
+              maxItems: actionCandidates.length ? 1 : 0,
+              items: actionItemSchema,
             },
             upsertEvent: {
               type: 'array',
-              maxItems: 1,
-              items: {
-                type: 'object',
-                additionalProperties: false,
-                required: [
-                  'id',
-                  'assetId',
-                  'activationTimeMs',
-                  'durationMs',
-                  'trajectory',
-                  'gain',
-                ],
-                properties: {
-                  id: { type: 'string' },
-                  assetId: { type: 'string', enum: assetIds },
-                  activationTimeMs: { type: 'number', minimum: 0 },
-                  durationMs: { type: 'number', minimum: 0, maximum: 120000 },
-                  trajectory: {
-                    type: 'array',
-                    minItems: 1,
-                    maxItems: 3,
-                    items: {
-                      type: 'object',
-                      additionalProperties: false,
-                      required: ['locationId', 'timestampMs'],
-                      properties: {
-                        locationId: { type: 'string', enum: sourceLocations },
-                        timestampMs: { type: 'number', minimum: 0 },
-                      },
-                    },
-                  },
-                  gain: { type: 'number', minimum: 0, maximum: 1 },
-                },
-              },
+              maxItems: eventCandidates.length ? 1 : 0,
+              items: eventItemSchema,
             },
             removeIds: { type: 'array', items: { type: 'string' } },
             transitionDurationMs: {
@@ -382,7 +430,6 @@ export function buildDecision2OutputSchema(
         },
         selectedAssetIds: {
           type: 'array',
-          uniqueItems: true,
           maxItems: 3,
           items: { type: 'string', enum: assetIds },
         },
@@ -415,6 +462,9 @@ export function validateDecision2Selection(
   result: PlanningResult,
   input: Decision2Input,
 ): void {
+  if (new Set(result.selectedAssetIds).size !== result.selectedAssetIds.length)
+    throw new Error('Decision 2 selectedAssetIds must not contain duplicates.');
+
   const allowed = new Set(
     input.candidates.map((candidate) => candidate.assetId),
   );
@@ -476,12 +526,9 @@ export function validateDecision2Selection(
     );
   const durationErrors = (result.patch.upsertEvent ?? []).filter((item) => {
     const candidate = candidateById.get(item.assetId);
-    const authoredSeconds =
-      candidate?.defaultMotion.durationSec ?? candidate?.autoDeleteAfterSec;
     return (
-      authoredSeconds !== null &&
-      authoredSeconds !== undefined &&
-      item.durationMs !== authoredSeconds * 1_000
+      candidate !== undefined &&
+      item.durationMs !== authoredEventDurationMs(candidate)
     );
   });
   if (durationErrors.length)

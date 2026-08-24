@@ -64,7 +64,7 @@ export function createStudyArtifactBundle(
     {
       filename: 'calibration-profile.json',
       mimeType: 'application/json',
-      content: json(mockCalibrationProfile),
+      content: json(recording.calibrationProfile ?? mockCalibrationProfile),
     },
     {
       filename: 'eeg-epochs.csv',
