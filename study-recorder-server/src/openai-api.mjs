@@ -18,6 +18,50 @@ function errorMessage(payload, status) {
   );
 }
 
+function outputTextFrom(response) {
+  // `output_text` is a convenience property exposed by OpenAI SDKs. The raw
+  // Responses REST payload returned by `fetch` stores text in
+  // output[].content[].text, so support both representations.
+  if (typeof response?.output_text === 'string' && response.output_text)
+    return response.output_text;
+
+  const parts = [];
+  for (const item of response?.output ?? []) {
+    for (const content of item?.content ?? []) {
+      if (content?.type === 'output_text' && typeof content.text === 'string')
+        parts.push(content.text);
+    }
+  }
+  return parts.join('');
+}
+
+function noOutputMessage(payload) {
+  const refusal = (payload?.output ?? [])
+    .flatMap((item) => item?.content ?? [])
+    .find((content) => content?.type === 'refusal')?.refusal;
+  if (refusal) return `OpenAI refused the structured response: ${refusal}`;
+
+  const incompleteReason = payload?.incomplete_details?.reason;
+  if (payload?.status === 'incomplete' || incompleteReason)
+    return `OpenAI response was incomplete${
+      incompleteReason ? ` (${incompleteReason})` : ''
+    } and contained no structured output.`;
+
+  const upstreamError = payload?.error;
+  if (upstreamError)
+    return `OpenAI response error${
+      upstreamError.code ? ` [${upstreamError.code}]` : ''
+    }: ${upstreamError.message ?? String(upstreamError)}`;
+
+  const outputTypes = (payload?.output ?? [])
+    .map((item) => item?.type)
+    .filter(Boolean)
+    .join(', ');
+  return `OpenAI returned no structured output (status=${
+    payload?.status ?? 'unknown'
+  }, output_types=${outputTypes || 'none'}).`;
+}
+
 export function createOpenAIRequester(options = {}) {
   const fetchImpl = options.fetchImpl ?? fetch;
   const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY;
@@ -52,7 +96,7 @@ export function createOpenAIRequester(options = {}) {
         text: {
           format: { type: 'json_schema', ...outputSchema },
         },
-        max_output_tokens: decisionOne ? 700 : 2_000,
+        max_output_tokens: decisionOne ? 900 : 2_000,
         store: false,
         metadata: {
           neuroscape_stage: stage,
@@ -63,13 +107,11 @@ export function createOpenAIRequester(options = {}) {
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(errorMessage(payload, response.status));
-    if (!payload.output_text)
-      throw new Error(
-        'OpenAI returned no structured output (the request may have been refused or interrupted).',
-      );
+    const outputText = outputTextFrom(payload);
+    if (!outputText) throw new Error(noOutputMessage(payload));
     let output;
     try {
-      output = JSON.parse(payload.output_text);
+      output = JSON.parse(outputText);
     } catch {
       throw new Error(
         'OpenAI returned structured output that was not valid JSON.',
