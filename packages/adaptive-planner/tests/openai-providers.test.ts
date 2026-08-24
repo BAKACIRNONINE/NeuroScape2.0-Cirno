@@ -25,6 +25,24 @@ const context = (): DecisionContext => ({
     timestampMs: 180_000,
     phase: 'adaptive',
     currentLogTbr: 1.7,
+    focusReferenceLogTbr: 1,
+    mindWanderingReferenceLogTbr: 1.8,
+    referenceGap: -0.8,
+    referenceGapAbs: 0.8,
+    calibrationNoise: 0.12,
+    separationRatio: 6.7,
+    calibrationQuality: 'high',
+    measurementConfidence: 'high',
+    signalQuality: 'good',
+    relativePosition: 0.125,
+    deltaFromFocus: 0.7,
+    deltaFromMindWandering: -0.1,
+    nearestReference: 'mind-wandering',
+    coverage: 'between-references',
+    relativePositionPrevious: 0.2,
+    relativePositionSlope: -0.08,
+    trajectory: 'declining',
+    stateEstimationVersion: 'reference_unbounded_v2',
     focusPosition: 0.12,
     mindWanderingPosition: 0.88,
     unboundedMindWanderingPosition: 0.88,
@@ -45,6 +63,9 @@ const context = (): DecisionContext => ({
     allowSceneTransition: true,
     sceneTransitionsRemaining: 2,
   },
+  secondsSinceLastMeaningfulChange: 80,
+  stasisPressure: false,
+  transitionInProgress: false,
 });
 
 function jsonResponse(output: unknown): Response {
@@ -67,10 +88,18 @@ describe('OpenAI planner providers', () => {
       fetchImpl: async (_input, init) => {
         requestBody = JSON.parse(String(init?.body));
         return jsonResponse({
-          shouldAdapt: true,
-          goal: 'gently-reorient',
+          decision: 'adapt',
+          intent: 'gently_reorient_attention',
+          salience: 'low',
           scope: 'within-scene',
-          rationale: 'A sustained decline warrants one sparse event.',
+          evidence_summary: {
+            position: 'mind-wandering-leaning',
+            trajectory: 'declining',
+            confidence: 'high',
+          },
+          reason: 'A sustained decline warrants one sparse event.',
+          maintain_reason: null,
+          constraints_for_decision_2: ['preserve_scene_continuity'],
         });
       },
     });
@@ -83,10 +112,10 @@ describe('OpenAI planner providers', () => {
       'Eligibility does not itself mean an adaptation is necessary',
     );
     expect(String(requestBody?.prompt)).toContain(
-      'do not maintain merely because the state is intermediate',
+      'relativePosition is unbounded',
     );
     expect(String(requestBody?.prompt)).toContain(
-      'high-confidence mind-wandering-leaning attention, normally adapt',
+      'Sustained focus does not automatically require maintain',
     );
     expect(result.provider).toBe('openai-responses');
     expect(result.model).toBe('gpt-5.6-2026-08-01');
@@ -96,6 +125,17 @@ describe('OpenAI planner providers', () => {
   it('sends Decision 2 candidates/schema and normalizes the structured patch', async () => {
     const value = context();
     const decision: AdaptationDecision = {
+      decision: 'adapt',
+      intent: 'gently_reorient_attention',
+      salience: 'low',
+      evidenceSummary: {
+        position: 'mind-wandering-leaning',
+        trajectory: 'declining',
+        confidence: 'high',
+      },
+      reason: 'test',
+      maintainReason: null,
+      constraintsForDecision2: ['preserve_scene_continuity'],
       shouldAdapt: true,
       goal: 'gently-reorient',
       scope: 'within-scene',
@@ -139,18 +179,27 @@ describe('OpenAI planner providers', () => {
     expect(result.outputSchema).toEqual(input.outputSchema);
   });
 
-  it('rejects an inconsistent Decision 1 response', async () => {
+  it('uses a safe maintain fallback for an inconsistent Decision 1 response', async () => {
     const provider = new OpenAIDecisionProvider({
       fetchImpl: async () =>
         jsonResponse({
-          shouldAdapt: false,
-          goal: 'gently-reorient',
+          decision: 'maintain',
+          intent: 'gently_reorient_attention',
+          salience: 'low',
           scope: 'within-scene',
-          rationale: 'invalid',
+          evidence_summary: {
+            position: 'intermediate',
+            trajectory: 'stable',
+            confidence: 'medium',
+          },
+          reason: 'invalid',
+          maintain_reason: null,
+          constraints_for_decision_2: [],
         }),
     });
-    await expect(provider.decide(context())).rejects.toThrow(
-      'inconsistent adapt/goal/scope',
-    );
+    const result = await provider.decide(context());
+    expect(result.shouldAdapt).toBe(false);
+    expect(result.provider).toBe('openai-validation-fallback');
+    expect(result.reason).toContain('validation_error');
   });
 });

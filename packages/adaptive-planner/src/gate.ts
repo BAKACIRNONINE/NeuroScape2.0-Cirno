@@ -8,27 +8,19 @@ import type {
 
 export function evaluateEligibility(
   state: AttentionState,
-  profile: CalibrationProfile,
+  _profile: CalibrationProfile,
   history: readonly AdaptationHistoryItem[],
   config: AdaptivePlannerConfig,
+  transitionUntilMs = 0,
+  stasisPressure = false,
 ): EligibilityResult {
   const reasons: string[] = [];
-  if (!profile.mappingAvailable || profile.qualityStatus === 'fail')
-    reasons.push('calibration_mapping_unavailable');
-  if (
-    Math.abs(profile.focusedAnchorLogTbr - profile.mindWanderingAnchorLogTbr) <
-    1e-6
-  )
-    reasons.push('calibration_anchors_not_separated');
   if (state.phase === 'opening') reasons.push('opening_phase');
   if (state.phase === 'closing') reasons.push('closing_phase');
-  if (state.validEpochCount < config.minimumValidEpochs)
+  if (state.timestampMs < transitionUntilMs)
+    reasons.push('transition_in_progress');
+  if (state.validEpochCount < config.minimumValidEpochs && !stasisPressure)
     reasons.push('insufficient_valid_epochs');
-  if (
-    state.confidence < config.minimumConfidence ||
-    state.label === 'uncertain'
-  )
-    reasons.push('low_confidence');
   const lastAdaptation = history.at(-1);
   if (
     lastAdaptation &&

@@ -80,56 +80,125 @@ export const phase1SoundKnowledge: readonly SoundAssetKnowledge[] =
 export class MockDecisionProvider implements DecisionProvider {
   async decide(context: DecisionContext): Promise<AdaptationDecision> {
     const state = context.state;
-    const mindWandering = state.mindWanderingPosition ?? 0;
+    const mindWandering =
+      state.relativePosition === null ? null : 1 - state.relativePosition;
+    const evidenceSummary = {
+      position:
+        state.label === 'uncertain' ? ('unavailable' as const) : state.label,
+      trajectory: state.trajectory,
+      confidence: state.measurementConfidence,
+    };
+    if (context.stasisPressure && state.label === 'focus-leaning') {
+      return {
+        decision: 'adapt',
+        intent: 'support_sustained_focus',
+        salience: 'minimal',
+        evidenceSummary,
+        reason:
+          'Stable focus plus prolonged scene stasis supports a minimal, non-corrective evolution.',
+        maintainReason: null,
+        constraintsForDecision2: [
+          'preserve_scene_continuity',
+          'avoid_high_salience_event',
+        ],
+        shouldAdapt: true,
+        goal: 'support-sustained-focus',
+        scope: 'within-scene',
+        rationale:
+          'Stable focus plus prolonged scene stasis supports a minimal, non-corrective evolution.',
+        provider: 'mock-decision-v2',
+      };
+    }
     if (
+      mindWandering !== null &&
       mindWandering >= 0.84 &&
       state.sustainedMindWanderingWindows >= 3 &&
       context.restrictions.allowSceneTransition
     ) {
       return {
+        decision: 'adapt',
+        intent: 'refresh_engagement',
+        salience: 'moderate',
+        evidenceSummary,
+        reason: 'Sustained reliable decline followed lighter interventions.',
+        maintainReason: null,
+        constraintsForDecision2: ['preserve_scene_continuity'],
         shouldAdapt: true,
         goal: 'refresh-engagement',
         scope: 'scene-transition',
         rationale:
           'Sustained high calibration-relative mind-wandering followed lighter interventions; a low-frequency scene transition is allowed.',
-        provider: 'mock-decision-v1',
+        provider: 'mock-decision-v2',
       };
     }
     if (
+      mindWandering !== null &&
       mindWandering >= 0.7 &&
       state.sustainedMindWanderingWindows >= 2 &&
       context.restrictions.allowBodyAnchor
     ) {
       return {
+        decision: 'adapt',
+        intent: 'support_grounding',
+        salience: 'low',
+        evidenceSummary,
+        reason: 'Reliable unstable or sustained decline supports grounding.',
+        maintainReason: null,
+        constraintsForDecision2: [
+          'preserve_scene_continuity',
+          'avoid_high_salience_event',
+        ],
         shouldAdapt: true,
         goal: 'support-grounding',
         scope: 'within-scene',
         rationale:
           'Mind-wandering is sustained across windows; use a body-relative anchor while keeping the semantic scene stable.',
-        provider: 'mock-decision-v1',
+        provider: 'mock-decision-v2',
       };
     }
     if (
+      mindWandering !== null &&
       mindWandering >= 0.52 &&
       state.trend === 'toward-mind-wandering' &&
       context.restrictions.allowEvent
     ) {
       return {
+        decision: 'adapt',
+        intent: 'gently_reorient_attention',
+        salience: 'low',
+        evidenceSummary,
+        reason:
+          'Reliable unbounded trajectory is declining toward the mind-wandering reference direction.',
+        maintainReason: null,
+        constraintsForDecision2: [
+          'preserve_scene_continuity',
+          'avoid_high_salience_event',
+        ],
         shouldAdapt: true,
         goal: 'gently-reorient',
         scope: 'within-scene',
         rationale:
           'Attention is moving toward the personal mind-wandering reference; use one sparse directional event.',
-        provider: 'mock-decision-v1',
+        provider: 'mock-decision-v2',
       };
     }
     return {
+      decision: 'maintain',
+      intent:
+        state.trajectory === 'improving' ? 'preserve_recovery' : 'maintain',
+      salience: 'minimal',
+      evidenceSummary,
+      reason:
+        'Current evidence and scene history do not justify a meaningful change.',
+      maintainReason:
+        'The current scene remains suitable and no stasis pressure requires supportive evolution.',
+      constraintsForDecision2: [],
       shouldAdapt: false,
       goal: 'maintain',
       scope: 'maintain',
       rationale:
         'The current calibration-relative state does not justify a new intervention at this checkpoint.',
-      provider: 'mock-decision-v1',
+      provider: 'mock-decision-v2',
     };
   }
 }
@@ -222,6 +291,41 @@ export class MockPlanningProvider implements PlanningProvider {
         outputSchema: input.outputSchema,
         rationale: `${candidate.label} is authored for grounding and body-anchored near-field presentation without listener movement.`,
         provider: 'mock-planner-v1',
+      };
+    }
+    if (decision.goal === 'support-sustained-focus') {
+      const candidate = input.candidates.find(
+        (item) => item.layer === 'ambient',
+      );
+      if (!candidate)
+        throw new Error(
+          'No continuous ambient candidate is available for sustained-focus support.',
+        );
+      const ambient: AmbientPlanItem = {
+        id: 'supportive-ambient',
+        assetId: candidate.assetId,
+        mode: candidate.spatialBehavior.includes('wide')
+          ? 'global'
+          : 'localized',
+        ...(!candidate.spatialBehavior.includes('wide')
+          ? { locationId: 'clearing' }
+          : {}),
+        gain: candidate.recommendedVolume,
+        active: true,
+      };
+      return {
+        patch: {
+          reasoningSummary: decision.rationale,
+          upsertAmbient: [ambient],
+          transitionDurationMs: 6_000,
+        },
+        selectedAssetIds: [ambient.assetId],
+        candidateAssetIds: input.candidates.map((item) => item.assetId),
+        promptVersion: input.promptVersion,
+        prompt: input.prompt,
+        outputSchema: input.outputSchema,
+        rationale: `${candidate.label} provides a minimal continuity-preserving evolution for sustained focus.`,
+        provider: 'mock-planner-v2',
       };
     }
     const candidate = input.candidates.find((item) => item.layer === 'event');

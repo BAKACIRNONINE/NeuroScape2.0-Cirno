@@ -19,6 +19,10 @@ export interface AdaptivePlannerConfig {
   exactAssetCooldownMs: number;
   assetFamilyCooldownMs: number;
   bodyAnchorCooldownMs: number;
+  referenceTolerance: number;
+  separationRatioMedium: number;
+  separationRatioHigh: number;
+  maxMeaningfulStasisMs: number;
 }
 
 /**
@@ -46,4 +50,9 @@ export const phase1Config: AdaptivePlannerConfig = Object.freeze({
   exactAssetCooldownMs: 90_000,
   assetFamilyCooldownMs: 45_000,
   bodyAnchorCooldownMs: 80_000,
+  // TBD_PILOT: descriptive reference and confidence thresholds.
+  referenceTolerance: 0.05,
+  separationRatioMedium: 1,
+  separationRatioHigh: 2.5,
+  maxMeaningfulStasisMs: 160_000,
 });

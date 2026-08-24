@@ -26,6 +26,7 @@ export class AdaptivePlannerEngine {
   readonly #checkpointStates: AttentionState[] = [];
   readonly #history: AdaptationHistoryItem[] = [];
   #currentPlan: SceneJourneyPlan;
+  #transitionUntilMs = 0;
 
   constructor(options: {
     config: AdaptivePlannerConfig;
@@ -50,12 +51,28 @@ export class AdaptivePlannerEngine {
     if (!this.isCheckpoint(epoch.timestampMs)) return null;
     const state = this.withCheckpointTrend(rawState);
     this.#checkpointStates.push(state);
-    const eligibility = evaluateEligibility(
-      state,
-      this.#profile,
-      this.#history,
-      this.#config,
+    const lastMeaningfulChange =
+      this.#history.at(-1)?.timestampMs ?? this.#config.openingDurationMs;
+    const secondsSinceLastMeaningfulChange = Math.max(
+      0,
+      (state.timestampMs - lastMeaningfulChange) / 1_000,
     );
+    const stasisPressure =
+      state.timestampMs - lastMeaningfulChange >=
+      this.#config.maxMeaningfulStasisMs;
+    const eligibility = {
+      ...evaluateEligibility(
+        state,
+        this.#profile,
+        this.#history,
+        this.#config,
+        this.#transitionUntilMs,
+        stasisPressure,
+      ),
+      secondsSinceLastMeaningfulChange,
+      stasisPressure,
+      transitionInProgress: state.timestampMs < this.#transitionUntilMs,
+    };
     const result: AdaptiveCheckpointResult = { state, eligibility };
     if (!eligibility.eligible) return result;
     const context = {
@@ -64,6 +81,9 @@ export class AdaptivePlannerEngine {
       currentPlan: structuredClone(this.#currentPlan),
       history: structuredClone(this.#history),
       restrictions: restrictionsFor(state, this.#history, this.#config),
+      secondsSinceLastMeaningfulChange,
+      stasisPressure,
+      transitionInProgress: state.timestampMs < this.#transitionUntilMs,
     };
     const decision = await this.#decisionProvider.decide(context);
     result.decision = decision;
@@ -85,12 +105,20 @@ export class AdaptivePlannerEngine {
       state.timestampMs,
     );
     this.#currentPlan = plan;
+    this.#transitionUntilMs =
+      state.timestampMs +
+      Math.max(
+        planning.patch.transitionDurationMs ?? 0,
+        plan.planningHorizonSec * 1_000,
+      );
     this.#history.push({
       timestampMs: state.timestampMs,
       goal: decision.goal,
       scope: decision.scope,
       assetIds: planning.selectedAssetIds,
       rationale: `${decision.rationale} ${planning.rationale}`,
+      intent: decision.intent,
+      salience: decision.salience,
     });
     result.planning = planning;
     result.plan = structuredClone(plan);
@@ -121,8 +149,8 @@ export class AdaptivePlannerEngine {
       ...this.#checkpointStates.slice(-(this.#config.trendWindowCount - 1)),
       state,
     ];
-    const first = recent[0]?.mindWanderingPosition;
-    const current = state.mindWanderingPosition;
+    const first = recent[0]?.relativePosition;
+    const current = state.relativePosition;
     const delta =
       recent.length < this.#config.trendWindowCount ||
       first === null ||
@@ -134,20 +162,34 @@ export class AdaptivePlannerEngine {
       delta === null
         ? 'insufficient-history'
         : delta > this.#config.trendDeltaThreshold
-          ? 'toward-mind-wandering'
+          ? 'toward-focus'
           : delta < -this.#config.trendDeltaThreshold
-            ? 'toward-focus'
+            ? 'toward-mind-wandering'
             : 'stable';
     const previous =
       this.#checkpointStates.at(-1)?.sustainedMindWanderingWindows ?? 0;
     const sustained =
-      current !== null && current >= this.#config.mindWanderingLeaningThreshold
+      current !== null &&
+      current <= 1 - this.#config.mindWanderingLeaningThreshold
         ? previous + 1
         : 0;
     return {
       ...state,
       trend,
       trendDeltaPerCheckpoint: delta,
+      relativePositionPrevious: recent.at(-2)?.relativePosition ?? null,
+      relativePositionSlope: delta,
+      trajectory:
+        delta === null
+          ? 'unavailable'
+          : state.variabilityMad !== null &&
+              state.variabilityMad > this.#config.highVariabilityMad
+            ? 'volatile'
+            : delta > this.#config.trendDeltaThreshold
+              ? 'improving'
+              : delta < -this.#config.trendDeltaThreshold
+                ? 'declining'
+                : 'stable',
       sustainedMindWanderingWindows: sustained,
     };
   }

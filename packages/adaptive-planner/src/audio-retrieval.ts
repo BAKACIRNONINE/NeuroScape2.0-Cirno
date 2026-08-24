@@ -8,6 +8,7 @@ import type {
   DecisionContext,
   PlanningResult,
 } from './types.js';
+import { reasoningAttentionState } from './types.js';
 
 export const DECISION_2_PROMPT_VERSION = 'decision-2-audio-library-v4';
 
@@ -38,6 +39,8 @@ const goalTags: Readonly<Record<string, readonly string[]>> = Object.freeze({
   'support-grounding': ['grounding', 'settling', 'stability_low'],
   'reduce-stimulation': ['anxiety_high', 'stability_low', 'settling'],
   'refresh-engagement': ['attention_low', 'adaptive_shift', 'immersion'],
+  'support-sustained-focus': ['stability_high', 'settling', 'immersion'],
+  'preserve-recovery': ['stability_high', 'settling'],
   maintain: ['settling', 'stability_high'],
 });
 
@@ -203,7 +206,7 @@ export function buildDecision2Prompt(
   ];
   const payload = {
     decision,
-    attentionState: context.state,
+    eegState: reasoningAttentionState(context.state),
     currentScene,
     currentLocation,
     listenerReachableLocations,
@@ -215,12 +218,14 @@ export function buildDecision2Prompt(
   };
   return [
     'You are NeuroScape Decision 2: How to Adapt.',
-    'Plan a restrained but perceptibly layered, neuro-informed soundscape patch that realizes the supplied Decision 1 goal and scope. When appropriate, combine one subtle ambient adjustment with at most one event or body-anchored action.',
+    'Plan a restrained but perceptibly layered soundscape patch that realizes the supplied Decision 1 intent, salience, scope, and constraintsForDecision2. When appropriate, combine one subtle ambient adjustment with at most one event or body-anchored action.',
     'Apply this goal-to-layer policy whenever restrictions permit and a compatible candidate exists:',
     '- gently-reorient: prioritize one perceptible event. An ambient adjustment may accompany it, but ambient-only changes should not satisfy this goal.',
     '- support-grounding: prioritize one body-anchored action. An ambient adjustment may accompany it, but ambient-only changes should not satisfy this goal.',
     '- refresh-engagement: prioritize a novel event for within-scene scope, or combine a continuous scene transition with one compatible event when scene-transition scope is authorized.',
     '- reduce-stimulation: remove or reduce event/action activity; do not add a salient cue merely to create change.',
+    '- support-sustained-focus: make a minimal continuous within-scene evolution; preserve meditation continuity and avoid framing the change as correction.',
+    '- preserve-recovery: normally preserve the current plan; if Decision 1 requested adaptation, use only a minimal continuity-preserving adjustment.',
     'If the most recent adaptation selected only ambient assets, prioritize an eligible event or action in this patch instead of making another ambient-only change.',
     'At least one newly selected asset should create an actually audible source change; do not claim adaptation while merely restating the current plan.',
     'Use only assetId values in candidates. Never invent an asset, location, motion, duration, gain, or numerical range.',

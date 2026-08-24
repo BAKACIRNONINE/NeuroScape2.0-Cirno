@@ -16,7 +16,7 @@ export function AIAdaptationPanel() {
           <dt>Attention</dt>
           <dd>
             {neuro?.attention
-              ? `${Math.round((neuro.attention.focusPosition ?? 0) * 100)}% focus · ${neuro.attention.trend}`
+              ? `Reference-relative ${neuro.attention.relativePosition?.toFixed(2) ?? 'unavailable'} · ${neuro.attention.trajectory ?? neuro.attention.trend}`
               : neuro
                 ? `${Math.round(neuro.arousal.value * 100)}% · ${neuro.arousal.trend}`
                 : 'Unavailable'}

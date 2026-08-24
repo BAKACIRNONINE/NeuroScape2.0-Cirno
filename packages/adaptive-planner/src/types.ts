@@ -11,6 +11,15 @@ export type AttentionLabel =
   'focus-leaning' | 'intermediate' | 'mind-wandering-leaning' | 'uncertain';
 export type AttentionTrend =
   'toward-focus' | 'toward-mind-wandering' | 'stable' | 'insufficient-history';
+export type ReferenceCoverage =
+  | 'between-references'
+  | 'beyond-focus-reference'
+  | 'beyond-mind-wandering-reference'
+  | 'at-or-near-reference'
+  | 'unavailable';
+export type StateTrajectory =
+  'improving' | 'stable' | 'declining' | 'volatile' | 'unavailable';
+export type ConfidenceLevel = 'high' | 'medium' | 'low';
 
 export interface CalibrationProfile {
   profileId: string;
@@ -34,7 +43,27 @@ export interface AttentionState {
   timestampMs: number;
   phase: SessionPhase;
   currentLogTbr: number | null;
+  focusReferenceLogTbr: number;
+  mindWanderingReferenceLogTbr: number;
+  referenceGap: number;
+  referenceGapAbs: number;
+  calibrationNoise: number;
+  separationRatio: number | null;
+  calibrationQuality: ConfidenceLevel | 'unusable';
+  measurementConfidence: ConfidenceLevel;
+  signalQuality: 'good' | 'fair' | 'poor' | 'unavailable';
+  relativePosition: number | null;
+  deltaFromFocus: number | null;
+  deltaFromMindWandering: number | null;
+  nearestReference: 'focus' | 'mind-wandering' | 'equidistant' | 'unavailable';
+  coverage: ReferenceCoverage;
+  relativePositionPrevious: number | null;
+  relativePositionSlope: number | null;
+  trajectory: StateTrajectory;
+  stateEstimationVersion: 'reference_unbounded_v2';
+  /** Visualization only; not a probability and not used for reasoning. */
   focusPosition: number | null;
+  /** Visualization only; not a probability and not used for reasoning. */
   mindWanderingPosition: number | null;
   unboundedMindWanderingPosition: number | null;
   label: AttentionLabel;
@@ -50,6 +79,9 @@ export interface EligibilityResult {
   eligible: boolean;
   timestampMs: number;
   reasons: string[];
+  secondsSinceLastMeaningfulChange?: number;
+  stasisPressure?: boolean;
+  transitionInProgress?: boolean;
 }
 
 export interface AdaptationRestrictions {
@@ -65,12 +97,29 @@ export interface AdaptationHistoryItem {
   scope: AdaptationScope;
   assetIds: string[];
   rationale: string;
+  intent?: AdaptationIntent;
+  salience?: AdaptationSalience;
+}
+
+export function reasoningAttentionState(state: AttentionState) {
+  const {
+    focusPosition: _displayFocus,
+    mindWanderingPosition: _displayMindWandering,
+    unboundedMindWanderingPosition: _legacyMindWandering,
+    ...reasoningState
+  } = state;
+  void _displayFocus;
+  void _displayMindWandering;
+  void _legacyMindWandering;
+  return reasoningState;
 }
 
 export type AdaptationGoal =
   | 'maintain'
   | 'gently-reorient'
   | 'support-grounding'
+  | 'support-sustained-focus'
+  | 'preserve-recovery'
   | 'reduce-stimulation'
   | 'refresh-engagement';
 export type AdaptationScope = 'maintain' | 'within-scene' | 'scene-transition';
@@ -81,9 +130,33 @@ export interface DecisionContext {
   currentPlan: SceneJourneyPlan;
   history: AdaptationHistoryItem[];
   restrictions: AdaptationRestrictions;
+  secondsSinceLastMeaningfulChange: number;
+  stasisPressure: boolean;
+  transitionInProgress: boolean;
 }
 
+export type AdaptationIntent =
+  | 'gently_reorient_attention'
+  | 'support_grounding'
+  | 'reduce_stimulation'
+  | 'support_sustained_focus'
+  | 'refresh_engagement'
+  | 'preserve_recovery'
+  | 'maintain';
+export type AdaptationSalience = 'minimal' | 'low' | 'moderate';
+
 export interface AdaptationDecision {
+  decision: 'adapt' | 'maintain';
+  intent: AdaptationIntent;
+  salience: AdaptationSalience;
+  evidenceSummary: {
+    position: AttentionLabel | 'unavailable';
+    trajectory: StateTrajectory;
+    confidence: ConfidenceLevel;
+  };
+  reason: string;
+  maintainReason: string | null;
+  constraintsForDecision2: string[];
   shouldAdapt: boolean;
   goal: AdaptationGoal;
   scope: AdaptationScope;
