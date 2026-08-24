@@ -475,7 +475,7 @@ class CalibrationService:
         if not block["completed_automatically"]:
             reasons.append("incomplete_duration")
         if valid_epochs < config.MIN_VALID_EPOCHS_PER_BLOCK:
-            reasons.append("fewer_than_5_valid_epochs")
+            reasons.append("fewer_than_4_valid_epochs")
         completeness = float(np.mean([epoch.packet_completeness for epoch in epochs])) if epochs else 0.0
         return {
             "status": "pass" if not reasons else "invalid",
@@ -564,10 +564,10 @@ class CalibrationService:
                 if value is not None
             ]
             issues: list[str] = []
-            if len(selected) < 2:
-                issues.append("fewer_than_2_eligible_blocks")
+            if len(selected) < 1:
+                issues.append("no_eligible_blocks")
             if valid_epochs < config.MIN_VALID_EPOCHS_PER_CONDITION:
-                issues.append("fewer_than_9_valid_epochs")
+                issues.append("fewer_than_4_valid_epochs")
             rejection_counts = Counter()
             channel_contributions = Counter()
             for block in selected:
@@ -799,12 +799,27 @@ class CalibrationService:
     def _live_session_start(self, profile: dict) -> dict:
         if not profile.get("ready_to_continue"):
             raise ValueError("Calibration quality is insufficient for an adaptive session")
+        if not self.receiver.status()["connected"]:
+            raise ValueError("Muse EEG is not streaming; realtime cannot start")
         samples = self.receiver.snapshot_samples()
         return {
             "after_sample_index": samples[-1].sample_index if samples else -1,
             "sampling_rate_hz": config.SAMPLING_RATE_HZ,
             "epoch_seconds": config.EPOCH_SECONDS,
         }
+
+    def start_raw_live_recording(self) -> dict:
+        status = self.receiver.status()
+        if not status["connected"]:
+            raise ValueError("Muse EEG is not streaming; raw recording cannot start")
+        samples = self.receiver.snapshot_samples()
+        return {
+            "after_sample_index": samples[-1].sample_index if samples else -1,
+            "sampling_rate_hz": config.SAMPLING_RATE_HZ,
+        }
+
+    def live_raw_samples(self, after_sample_index: int) -> list[EEGSample]:
+        return self.receiver.snapshot_samples(start_index=after_sample_index + 1)
 
     def live_epoch(self, after_sample_index: int) -> dict:
         epoch_size = config.SAMPLING_RATE_HZ * config.EPOCH_SECONDS

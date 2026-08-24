@@ -33,6 +33,8 @@ import { liveSessionId } from '../network/liveRuntime.js';
 import { CalibrationPage } from '../calibration/CalibrationPage.js';
 import {
   LiveEegEpochSource,
+  LiveRawEegRecorder,
+  type RawEegRecordingSource,
   toPlannerCalibrationProfile,
 } from '../calibration/integration.js';
 import type { Profile } from '../calibration/types.js';
@@ -42,6 +44,7 @@ type Page =
 export function App() {
   const finalizing = useRef(false);
   const audioCaptureError = useRef<string | null>(null);
+  const rawEegSource = useRef<RawEegRecordingSource | null>(null);
   const returnHomeAfterFinalize = useRef(false);
   const [page, setPage] = useState<Page>('home');
   const [calibrationIntent, setCalibrationIntent] =
@@ -59,6 +62,20 @@ export function App() {
     | 'replay'
   >('live');
   const [realTimeRestartEnabled, setRealTimeRestartEnabled] = useState(false);
+  const startAdaptiveAudio = async () => {
+    try {
+      await audioEngine.startRecording();
+    } catch (error) {
+      audioCaptureError.current =
+        error instanceof Error ? error.message : String(error);
+      console.error('Audio capture unavailable; session will continue.', error);
+    }
+    try {
+      await audioEngine.playOpening();
+    } catch (error) {
+      console.error('Meditation opening unavailable; session will continue.', error);
+    }
+  };
   const sessionStatus = useStore(
     runtimeStore,
     (state) => state.sessionRuntime.status,
@@ -85,6 +102,9 @@ export function App() {
       finalizing.current = true;
       void (async () => {
         let audio = null;
+        let rawEeg: Blob | null = null;
+        const finalizationErrors: string[] = [];
+        audioEngine.stopOpening();
         try {
           audio = await audioEngine.stopRecording();
         } catch (error) {
@@ -95,12 +115,24 @@ export function App() {
             error,
           );
         }
+        try {
+          rawEeg = (await rawEegSource.current?.rawCsv()) ?? null;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          finalizationErrors.push(`Raw EEG finalization failed: ${message}`);
+          console.error('Raw EEG finalization failed.', error);
+        }
+        rawEegSource.current = null;
         const recording = recordingStore.stop();
         if (recording?.metadata.participantId) {
           const bundle = createStudyArtifactBundle(
             recording,
             audio,
-            audioCaptureError.current ? [audioCaptureError.current] : [],
+            [
+              ...(audioCaptureError.current ? [audioCaptureError.current] : []),
+              ...finalizationErrors,
+            ],
+            rawEeg,
           );
           studyArtifactStore.setBundle(bundle);
           setPage(returnHomeAfterFinalize.current ? 'home' : 'summary');
@@ -185,11 +217,7 @@ export function App() {
       plannerMode: intent.plannerMode,
     });
     setPage('session');
-    void audioEngine.startRecording().catch((error) => {
-      audioCaptureError.current =
-        error instanceof Error ? error.message : String(error);
-      console.error('Audio capture unavailable; session will continue.', error);
-    });
+    void startAdaptiveAudio();
   };
   const startCalibratedAdaptive = async (profile: Profile) => {
     try {
@@ -201,6 +229,7 @@ export function App() {
         );
       const epochSource = new LiveEegEpochSource(profile.session_id);
       await epochSource.start();
+      rawEegSource.current = epochSource;
       const plannerProfile = toPlannerCalibrationProfile(profile);
       liveRuntimeClient.disconnect();
       setMode('adaptive');
@@ -227,11 +256,9 @@ export function App() {
         epochSource,
       });
       setPage('session');
-      void audioEngine.startRecording().catch((error) => {
-        audioCaptureError.current =
-          error instanceof Error ? error.message : String(error);
-      });
+      void startAdaptiveAudio();
     } catch (error) {
+      rawEegSource.current = null;
       window.alert(error instanceof Error ? error.message : String(error));
     }
   };
@@ -261,7 +288,16 @@ export function App() {
     spatialDiagnosticHarness.start();
     setPage('session');
   };
-  const startNonAdaptive = (participantId: string) => {
+  const startNonAdaptive = async (participantId: string) => {
+    try {
+      const recorder = new LiveRawEegRecorder();
+      await recorder.start();
+      rawEegSource.current = recorder;
+    } catch (error) {
+      rawEegSource.current = null;
+      window.alert(error instanceof Error ? error.message : String(error));
+      return;
+    }
     liveRuntimeClient.disconnect();
     setMode('non-adaptive');
     setRealTimeRestartEnabled(false);
@@ -273,9 +309,9 @@ export function App() {
       participantId,
       runMode: 'non-adaptive',
       plannerMode: 'fixed',
-      eegMode: 'none',
+      eegMode: 'muse',
       userPrompt:
-        'Approved fixed 10-minute non-adaptive trajectory; no EEG and no runtime LLM',
+        'Approved fixed 10-minute non-adaptive trajectory; Muse EEG is recorded for analysis but is not used for adaptation',
       startedAtIso: new Date().toISOString(),
       controlAudioId: 'non-adaptive-10min-v1',
       controlTrajectoryId: 'non-adaptive-trajectory-approved-v1',

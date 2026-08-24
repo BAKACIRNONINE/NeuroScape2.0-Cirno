@@ -115,3 +115,13 @@ def test_condition_selection_uses_later_block_only_after_all_other_ties(tmp_path
     assert evaluation["selected_block_ids"] == ["f2", "f3"]
     assert evaluation["status"] == "pass"
     service.store.close()
+
+
+def test_condition_passes_with_one_eligible_four_epoch_block(tmp_path):
+    service = CalibrationService(store=SessionStore(tmp_path))
+    service.blocks = [block("f1", FOCUSED, 1, 0, valid_epochs=4)]
+    evaluation = service._condition_evaluation()[FOCUSED]
+    assert evaluation["status"] == "pass"
+    assert evaluation["selected_block_ids"] == ["f1"]
+    assert evaluation["valid_epochs"] == 4
+    service.store.close()

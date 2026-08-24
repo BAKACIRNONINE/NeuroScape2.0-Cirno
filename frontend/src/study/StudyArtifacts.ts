@@ -52,6 +52,7 @@ export function createStudyArtifactBundle(
   recording: RecordedSession,
   audio: CapturedAudio | null,
   errors: readonly string[] = [],
+  rawEeg: Blob | null = null,
 ): StudyArtifactBundle {
   const participantId = recording.metadata.participantId ?? 'UNASSIGNED';
   const sessionId = recording.metadata.sessionId;
@@ -173,6 +174,12 @@ export function createStudyArtifactBundle(
       filename: `spatial-audio-mix.${audio.extension}`,
       mimeType: audio.mimeType,
       content: audio.blob,
+    });
+  if (rawEeg)
+    files.push({
+      filename: 'raw_eeg.csv',
+      mimeType: 'text/csv',
+      content: rawEeg,
     });
   const manifest = {
     participantId,

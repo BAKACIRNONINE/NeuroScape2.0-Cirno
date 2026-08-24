@@ -86,4 +86,27 @@ describe('AudioEngine integration', () => {
     expect(capture?.extension).toBe('webm');
     expect(engine.getState().recordingStatus).toBe('idle');
   });
+  it('plays the opening once through the non-spatialized master mix', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => new ArrayBuffer(1),
+      })),
+    );
+    const fake = new FakeAudioContext();
+    const engine = new AudioEngine(
+      createRuntimeStore(),
+      new AudioContextManager(() => fake as unknown as AudioContext),
+    );
+    await engine.playOpening();
+    const opening = fake.sources.at(-1)!;
+    expect(opening.loop).toBe(false);
+    expect(opening.starts).toEqual([fake.currentTime]);
+    expect(fake.panners).toHaveLength(0);
+    engine.stopOpening();
+    expect(opening.stops).toEqual([fake.currentTime]);
+    await engine.dispose();
+  });
 });

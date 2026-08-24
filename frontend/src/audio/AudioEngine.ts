@@ -8,6 +8,7 @@ import { GainManager } from './GainManager.js';
 import { HRTFRenderer } from './HRTFRenderer.js';
 import { PlaybackScheduler } from './PlaybackScheduler.js';
 import { SourceManager, type AudioSourceDiagnostics } from './SourceManager.js';
+import { MEDITATION_OPENING_URL } from './opening.js';
 
 export type AudioRecordingStatus =
   'idle' | 'recording' | 'stopping' | 'unavailable' | 'error';
@@ -36,6 +37,12 @@ export class AudioEngine {
   #assets: AudioAssetManager | null = null;
   #captureDestination: MediaStreamAudioDestinationNode | null = null;
   #mediaRecorder: MediaRecorder | null = null;
+  #openingBuffer: AudioBuffer | null = null;
+  #openingSource: AudioBufferSourceNode | null = null;
+  readonly #mediaElementSources = new Map<
+    HTMLMediaElement,
+    MediaElementAudioSourceNode
+  >();
   #captureChunks: Blob[] = [];
   #captureStartedAtMs = 0;
   #state: AudioEngineState = {
@@ -152,6 +159,51 @@ export class AudioEngine {
     this.#set({ ...this.#state, recordingStatus: 'idle' });
     return result;
   }
+  async playOpening(): Promise<void> {
+    await this.enable();
+    if (!this.#master) throw new Error('Master audio is unavailable.');
+    if (!this.#openingBuffer) {
+      const response = await fetch(MEDITATION_OPENING_URL);
+      if (!response.ok)
+        throw new Error(`Opening audio failed to load: HTTP ${response.status}`);
+      this.#openingBuffer = await this.#contexts.context.decodeAudioData(
+        await response.arrayBuffer(),
+      );
+    }
+    this.stopOpening();
+    const source = this.#contexts.context.createBufferSource();
+    source.buffer = this.#openingBuffer;
+    source.loop = false;
+    source.connect(this.#master);
+    source.onended = () => {
+      if (this.#openingSource === source) this.#openingSource = null;
+      source.disconnect();
+    };
+    this.#openingSource = source;
+    source.start(this.#contexts.currentTime);
+  }
+  stopOpening(): void {
+    const source = this.#openingSource;
+    this.#openingSource = null;
+    if (!source) return;
+    source.onended = null;
+    try {
+      source.stop(this.#contexts.currentTime);
+    } catch {
+      // The one-shot opening may already have ended.
+    }
+    source.disconnect();
+  }
+  connectMediaElement(element: HTMLMediaElement): () => void {
+    if (!this.#master) throw new Error('Master audio is unavailable.');
+    let source = this.#mediaElementSources.get(element);
+    if (!source) {
+      source = this.#contexts.context.createMediaElementSource(element);
+      this.#mediaElementSources.set(element, source);
+    }
+    source.connect(this.#master);
+    return () => source?.disconnect();
+  }
   update(state: Readonly<RuntimeWorldState>): void {
     this.#sources?.reconcile(state);
     this.#set({
@@ -172,6 +224,7 @@ export class AudioEngine {
   }
   async dispose(): Promise<void> {
     await this.stopRecording();
+    this.stopOpening();
     this.#unsubscribe?.();
     this.#unsubscribe = null;
     this.#sources?.dispose();
@@ -182,6 +235,9 @@ export class AudioEngine {
     this.#hrtf = null;
     this.#master = null;
     this.#assets = null;
+    this.#openingBuffer = null;
+    this.#mediaElementSources.forEach((source) => source.disconnect());
+    this.#mediaElementSources.clear();
     this.#captureDestination = null;
     await this.#contexts.close();
     this.#set({

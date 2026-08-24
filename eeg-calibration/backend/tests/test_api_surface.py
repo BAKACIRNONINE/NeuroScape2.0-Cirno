@@ -1,9 +1,12 @@
 import mimetypes
+import csv
+import io
 
 from fastapi.testclient import TestClient
 
 from app import config
 from app.main import app
+from app.models.schemas import EEGSample
 
 
 def test_protocol_v4_api_surface_replaces_two_phase_api():
@@ -36,3 +39,27 @@ def test_javascript_modules_have_browser_compatible_mime_type():
         response = TestClient(app).get(f"/assets/{bundle.name}")
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("application/javascript")
+
+
+def test_live_raw_csv_rebases_elapsed_time(monkeypatch):
+    samples = [
+        EEGSample(
+            sample_index=index,
+            monotonic_timestamp=100.0 + index / 256,
+            session_elapsed_seconds=999.0,
+            tp9=1,
+            af7=2,
+            af8=3,
+            tp10=4,
+        )
+        for index in (10, 11)
+    ]
+    from app import main
+
+    monkeypatch.setattr(main.service, "live_raw_samples", lambda after: samples)
+    response = TestClient(app).get("/api/live/raw.csv?after_sample_index=9")
+    assert response.status_code == 200
+    rows = list(csv.DictReader(io.StringIO(response.text)))
+    assert [int(row["sample_index"]) for row in rows] == [10, 11]
+    assert float(rows[0]["session_elapsed_seconds"]) == 0.0
+    assert float(rows[1]["session_elapsed_seconds"]) == 1 / 256

@@ -237,6 +237,20 @@ def test_valid_collection_generates_provisional_median_profile(tmp_path):
     service.shutdown()
 
 
+def test_one_eligible_block_per_condition_is_enough_for_profile(tmp_path):
+    service = ready_service(tmp_path)
+    service.blocks = [
+        protocol_block("f1", FOCUSED, 1, [1, 2, 3, 4]),
+        protocol_block("t1", FREE_THOUGHT, 2, [10, 11, 12, 13]),
+    ]
+    profile = service._process()
+    assert profile["focused_meditation_anchor"] == pytest.approx(2.5)
+    assert profile["free_thought_anchor"] == pytest.approx(11.5)
+    assert profile["ready_to_continue"] is True
+    assert profile["selected_block_ids"] == ["f1", "t1"]
+    service.shutdown()
+
+
 def test_reset_cancels_active_phase_timer(tmp_path):
     service = ready_service(tmp_path)
     service.start_acclimation()

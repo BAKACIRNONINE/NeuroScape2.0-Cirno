@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import csv
+import io
 import asyncio
 import mimetypes
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import config
 from app.calibration.machine import InvalidTransition
 from app.calibration.service import CalibrationService
-from app.models.schemas import CalibrationStart, SelfReportSubmit, SessionCreate
+from app.models.schemas import CalibrationStart, EEGSample, SelfReportSubmit, SessionCreate
 from app.signal_processing.core import (
     INCOMPATIBLE_PROFILE_MESSAGE,
     IncompatibleCalibrationProfile,
@@ -147,6 +149,49 @@ def start_saved_live_session(session_id: str) -> dict:
 @app.get("/api/live/epoch")
 def live_epoch(after_sample_index: int = -1) -> dict:
     return service.live_epoch(after_sample_index)
+
+
+@app.post("/api/live/recording/start")
+def start_raw_live_recording() -> dict:
+    try:
+        return service.start_raw_live_recording()
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.get("/api/live/raw.csv")
+def live_raw_csv(after_sample_index: int = -1) -> StreamingResponse:
+    samples = service.live_raw_samples(after_sample_index)
+
+    def rows():
+        fields = list(EEGSample.model_fields)
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=fields, lineterminator="\n")
+        writer.writeheader()
+        yield output.getvalue()
+        output.seek(0)
+        output.truncate(0)
+        first_timestamp = samples[0].monotonic_timestamp if samples else None
+        for index, sample in enumerate(samples, start=1):
+            record = sample.csv_row()
+            record["session_elapsed_seconds"] = (
+                sample.monotonic_timestamp - first_timestamp
+                if first_timestamp is not None
+                else None
+            )
+            writer.writerow(record)
+            if index % 1024 == 0:
+                yield output.getvalue()
+                output.seek(0)
+                output.truncate(0)
+        if output.tell():
+            yield output.getvalue()
+
+    return StreamingResponse(
+        rows(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="raw_eeg.csv"'},
+    )
 
 
 @app.get("/api/sessions")

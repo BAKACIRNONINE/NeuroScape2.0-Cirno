@@ -92,6 +92,10 @@ describe('migrated NeuroScape UI', () => {
       <FixedAudioSessionPage onHome={() => undefined} />,
     );
     expect(session).toContain('same pre-rendered control audio');
-    expect(session).toContain('EEG and LLM services are not used');
+    expect(session).toContain('Muse EEG');
+    expect(session).toContain('does not change the soundscape');
+    expect(session).toContain(
+      '/audio/common/opening/meditation_opening.mp3',
+    );
   });
 });

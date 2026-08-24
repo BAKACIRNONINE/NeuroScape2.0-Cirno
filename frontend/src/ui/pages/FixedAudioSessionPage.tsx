@@ -1,5 +1,7 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from 'zustand';
+import { audioEngine } from '../../audio/AudioEngine.js';
+import { MEDITATION_OPENING_URL } from '../../audio/opening.js';
 import { runtimeStore } from '../../runtime/RuntimeStore.js';
 
 const AUDIO_URL = '/audio/control/non-adaptive-10min.mp3';
@@ -10,8 +12,41 @@ const clock = (milliseconds: number) => {
 
 export function FixedAudioSessionPage({ onHome }: { onHome: () => void }) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const openingRef = useRef<HTMLAudioElement>(null);
   const [playbackError, setPlaybackError] = useState('');
   const session = useStore(runtimeStore, (state) => state.sessionRuntime);
+  useEffect(() => {
+    let cancelled = false;
+    let disconnectControl: (() => void) | undefined;
+    let disconnectOpening: (() => void) | undefined;
+    void (async () => {
+      try {
+        await audioEngine.startRecording();
+      } catch (error) {
+        console.error(
+          'Master-audio capture unavailable; non-adaptive playback will continue.',
+          error,
+        );
+        await audioEngine.enable();
+      }
+      try {
+        if (cancelled || !audioRef.current || !openingRef.current) return;
+        disconnectControl = audioEngine.connectMediaElement(audioRef.current);
+        disconnectOpening = audioEngine.connectMediaElement(openingRef.current);
+        await Promise.all([audioRef.current.play(), openingRef.current.play()]);
+        setPlaybackError('');
+      } catch (error) {
+        setPlaybackError(error instanceof Error ? error.message : String(error));
+      }
+    })();
+    return () => {
+      cancelled = true;
+      audioRef.current?.pause();
+      openingRef.current?.pause();
+      disconnectControl?.();
+      disconnectOpening?.();
+    };
+  }, []);
   const updateTime = () =>
     runtimeStore
       .getState()
@@ -23,7 +58,12 @@ export function FixedAudioSessionPage({ onHome }: { onHome: () => void }) {
       });
   const play = async () => {
     try {
-      await audioRef.current?.play();
+      await Promise.all([
+        audioRef.current?.play(),
+        openingRef.current && !openingRef.current.ended
+          ? openingRef.current.play()
+          : Promise.resolve(),
+      ]);
       setPlaybackError('');
       runtimeStore.getState().setSessionRuntime({ status: 'running' });
     } catch (error) {
@@ -32,10 +72,12 @@ export function FixedAudioSessionPage({ onHome }: { onHome: () => void }) {
   };
   const pause = () => {
     audioRef.current?.pause();
+    openingRef.current?.pause();
     runtimeStore.getState().setSessionRuntime({ status: 'paused' });
   };
   const end = () => {
     audioRef.current?.pause();
+    openingRef.current?.pause();
     updateTime();
     runtimeStore.getState().setSessionRuntime({ status: 'ended' });
   };
@@ -56,8 +98,8 @@ export function FixedAudioSessionPage({ onHome }: { onHome: () => void }) {
         <span className="panel-kicker">10 MIN NON-ADAPTIVE CONTROL</span>
         <h1>Fixed Meditation</h1>
         <p>
-          Every participant hears the same pre-rendered control audio. EEG and
-          LLM services are not used.
+          Every participant hears the same pre-rendered control audio. Muse EEG
+          is recorded for later analysis but does not change the soundscape.
         </p>
         <strong className="fixed-audio-clock">
           {clock(session.elapsedTimeMs)} / 10:00
@@ -65,7 +107,6 @@ export function FixedAudioSessionPage({ onHome }: { onHome: () => void }) {
         <audio
           ref={audioRef}
           src={AUDIO_URL}
-          autoPlay
           preload="auto"
           onTimeUpdate={updateTime}
           onPlay={() =>
@@ -75,13 +116,22 @@ export function FixedAudioSessionPage({ onHome }: { onHome: () => void }) {
             if (runtimeStore.getState().sessionRuntime.status !== 'ended')
               runtimeStore.getState().setSessionRuntime({ status: 'paused' });
           }}
-          onEnded={() =>
+          onEnded={() => {
+            openingRef.current?.pause();
             runtimeStore
               .getState()
-              .setSessionRuntime({ elapsedTimeMs: 600_000, status: 'ended' })
-          }
+              .setSessionRuntime({ elapsedTimeMs: 600_000, status: 'ended' });
+          }}
           onError={() =>
             setPlaybackError('The fixed control audio could not be loaded.')
+          }
+        />
+        <audio
+          ref={openingRef}
+          src={MEDITATION_OPENING_URL}
+          preload="auto"
+          onError={() =>
+            setPlaybackError('The meditation opening could not be loaded.')
           }
         />
         <div className="session-controls">
