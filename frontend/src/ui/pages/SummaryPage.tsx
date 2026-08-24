@@ -123,7 +123,9 @@ export function SummaryPage({
           <h2>Study Artifacts</h2>
           <p>
             <strong>Participant:</strong> {recording.metadata.participantId} ·{' '}
-            <strong>Mode:</strong> {recording.metadata.runMode}
+            <strong>Mode:</strong> {recording.metadata.runMode} ·{' '}
+            <strong>Planner:</strong>{' '}
+            {recording.metadata.plannerMode ?? 'not recorded'}
           </p>
           <p>
             {artifacts.backend.status === 'saving'

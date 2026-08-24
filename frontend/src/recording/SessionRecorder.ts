@@ -17,6 +17,7 @@ export interface RecordingStartOptions {
   eegMode?: 'muse' | 'recorded';
   participantId?: string;
   runMode?: 'mock-fast' | 'study-realtime';
+  plannerMode?: 'openai' | 'mock';
   startedAtIso?: string;
 }
 export class SessionRecorder {
@@ -44,6 +45,7 @@ export class SessionRecorder {
         eegMode: options.eegMode,
         participantId: options.participantId,
         runMode: options.runMode,
+        plannerMode: options.plannerMode,
         startedAtIso: options.startedAtIso,
       },
       runtimeSnapshots: [],

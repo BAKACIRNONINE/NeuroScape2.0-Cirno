@@ -120,7 +120,24 @@ export function App() {
     integrationHarness.start();
     setPage('session');
   };
-  const startAdaptive = (intent: AdaptiveSessionIntent) => {
+  const startAdaptive = async (intent: AdaptiveSessionIntent) => {
+    if (intent.plannerMode === 'openai') {
+      try {
+        const response = await fetch('/api/llm/health');
+        const health = (await response.json()) as { configured?: boolean };
+        if (!response.ok || !health.configured) {
+          window.alert(
+            'OpenAI planner is not configured. Add OPENAI_API_KEY to the repository-root .env file and restart npm run dev, or choose Offline mock.',
+          );
+          return;
+        }
+      } catch {
+        window.alert(
+          'The local OpenAI planner service is unavailable. Restart npm run dev or choose Offline mock.',
+        );
+        return;
+      }
+    }
     liveRuntimeClient.disconnect();
     setMode('adaptive');
     studyArtifactStore.reset();
@@ -130,11 +147,16 @@ export function App() {
       sessionId,
       participantId: intent.participantId,
       runMode: intent.runMode,
-      userPrompt: '10-minute Module 01/02 adaptive mock replay',
+      plannerMode: intent.plannerMode,
+      userPrompt: `10-minute Module 01/02 adaptive replay · ${intent.plannerMode}`,
       eegMode: 'recorded',
       startedAtIso: new Date().toISOString(),
     });
-    adaptiveIntegrationHarness.start({ sessionId, runMode: intent.runMode });
+    adaptiveIntegrationHarness.start({
+      sessionId,
+      runMode: intent.runMode,
+      plannerMode: intent.plannerMode,
+    });
     setPage('session');
     void audioEngine.startRecording().catch((error) => {
       audioCaptureError.current =

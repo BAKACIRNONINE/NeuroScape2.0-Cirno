@@ -56,6 +56,10 @@ export function createStudyArtifactBundle(
   const participantId = recording.metadata.participantId ?? 'UNASSIGNED';
   const sessionId = recording.metadata.sessionId;
   const eegEpochs = trace(recording, 'eeg-epoch');
+  const recordedErrors = trace(recording, 'llm-error').map(
+    (item) => `${item.timestampMs}ms · ${item.summary}`,
+  );
+  const allErrors = [...recordedErrors, ...errors];
   const files: StudyArtifact[] = [
     {
       filename: 'calibration-profile.json',
@@ -154,8 +158,8 @@ export function createStudyArtifactBundle(
       mimeType: 'text/plain',
       content: new Blob(
         [
-          errors.length
-            ? `${errors.join('\n')}\n`
+          allErrors.length
+            ? `${allErrors.join('\n')}\n`
             : 'No recorded finalization errors.\n',
         ],
         {
@@ -177,9 +181,10 @@ export function createStudyArtifactBundle(
     schemaVersion: '1.0',
     logicalDurationMs: recording.metadata.durationMs,
     runMode: recording.metadata.runMode,
+    plannerMode: recording.metadata.plannerMode,
     capturedAudioDurationMs: audio?.durationMs ?? null,
     audioMimeType: audio?.mimeType ?? null,
-    errorCount: errors.length,
+    errorCount: allErrors.length,
     files: files.map((file) => ({
       filename: file.filename,
       mimeType: file.mimeType,

@@ -2,6 +2,8 @@ import {
   AdaptivePlannerEngine,
   MockDecisionProvider,
   MockPlanningProvider,
+  OpenAIDecisionProvider,
+  OpenAIPlanningProvider,
   createMockTbrReplay,
   initialForestPlan,
   mockCalibrationProfile,
@@ -47,6 +49,7 @@ export type AdaptiveRunMode = 'mock-fast' | 'study-realtime';
 export interface AdaptiveHarnessStartOptions {
   sessionId?: string;
   runMode?: AdaptiveRunMode;
+  plannerMode?: 'openai' | 'mock';
 }
 export interface AdaptiveIntervalApi {
   set(callback: () => void, milliseconds: number): unknown;
@@ -63,6 +66,7 @@ export class AdaptiveIntegrationHarness {
   readonly #listeners = new Set<() => void>();
   #sessionId = 'adaptive-mock-session';
   #runMode: AdaptiveRunMode = 'mock-fast';
+  #plannerMode: 'openai' | 'mock' = 'openai';
   #runtime: RuntimeController | null = null;
   #planner: AdaptivePlannerEngine | null = null;
   #timer: unknown;
@@ -93,6 +97,7 @@ export class AdaptiveIntegrationHarness {
     this.end(false);
     this.#sessionId = options.sessionId ?? 'adaptive-mock-session';
     this.#runMode = options.runMode ?? 'mock-fast';
+    this.#plannerMode = options.plannerMode ?? 'openai';
     this.#store.getState().resetSessionStreams();
     runtimeDiagnostics.reset();
     this.#runtime = this.createRuntime();
@@ -100,8 +105,14 @@ export class AdaptiveIntegrationHarness {
       config: phase1Config,
       profile: mockCalibrationProfile,
       initialPlan: initialForestPlan,
-      decisionProvider: new MockDecisionProvider(),
-      planningProvider: new MockPlanningProvider(),
+      decisionProvider:
+        this.#plannerMode === 'openai'
+          ? new OpenAIDecisionProvider({ sessionId: this.#sessionId })
+          : new MockDecisionProvider(),
+      planningProvider:
+        this.#plannerMode === 'openai'
+          ? new OpenAIPlanningProvider({ sessionId: this.#sessionId })
+          : new MockPlanningProvider(),
     });
     this.#runtime.initialize(initialForestPlan);
     this.#epochIndex = 0;
@@ -113,7 +124,7 @@ export class AdaptiveIntegrationHarness {
     };
     this.dispatch('PlannerStatus', 0, {
       status: 'ready',
-      message: 'Module 01/02 mock providers ready · opening phase',
+      message: `Module 01/02 ${this.#plannerMode === 'openai' ? 'OpenAI GPT-5.6' : 'mock'} providers ready · opening phase`,
     });
     this.dispatch('SceneJourneyPlan', 0, initialForestPlan);
     this.dispatch('RuntimeWorldState', 0, this.#runtime.currentState!);
@@ -191,7 +202,24 @@ export class AdaptiveIntegrationHarness {
           `Mock log-TBR epoch ${epoch.valid ? 'accepted' : 'rejected'}`,
           epoch,
         );
-        const result = await this.#planner.ingest(epoch);
+        let result: AdaptiveCheckpointResult | null = null;
+        try {
+          result = await this.#planner.ingest(epoch);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          this.trace(
+            epoch.timestampMs,
+            'llm-error',
+            this.#plannerMode === 'openai' ? 'openai' : 'mock-llm',
+            message,
+            { message, plannerMode: this.#plannerMode },
+          );
+          this.dispatch('PlannerStatus', epoch.timestampMs, {
+            status: 'error',
+            message: `Planner error; maintaining the current soundscape. ${message}`,
+          });
+        }
         const state = result?.state ?? this.#planner.attentionStates.at(-1)!;
         this.dispatch(
           'NeuroState',
@@ -251,7 +279,7 @@ export class AdaptiveIntegrationHarness {
       this.trace(
         result.state.timestampMs,
         'decision-1',
-        'mock-llm',
+        result.decision.provider.startsWith('openai') ? 'openai' : 'mock-llm',
         result.decision.rationale,
         result.decision,
       );
@@ -264,7 +292,7 @@ export class AdaptiveIntegrationHarness {
       this.trace(
         result.state.timestampMs,
         'decision-2',
-        'mock-llm',
+        result.planning.provider.startsWith('openai') ? 'openai' : 'mock-llm',
         result.planning.rationale,
         result.planning,
       );

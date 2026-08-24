@@ -4,6 +4,7 @@ import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
+import { createOpenAIRequester } from './openai-api.mjs';
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const SAFE_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -27,6 +28,33 @@ function json(response, status, payload) {
   response.end(JSON.stringify(payload));
 }
 
+async function readJson(request, maximumBytes = 1024 * 1024) {
+  const chunks = [];
+  let received = 0;
+  for await (const chunk of request) {
+    received += chunk.length;
+    if (received > maximumBytes) throw new Error('Request exceeds size limit.');
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
+function validateLlmRequest(payload) {
+  if (
+    typeof payload?.prompt !== 'string' ||
+    typeof payload?.promptVersion !== 'string' ||
+    typeof payload?.outputSchema?.name !== 'string' ||
+    payload?.outputSchema?.strict !== true ||
+    typeof payload?.outputSchema?.schema !== 'object'
+  )
+    throw new Error('Invalid LLM request.');
+}
+
+function llmOriginAllowed(request) {
+  const origin = request.headers.origin;
+  return !origin || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+}
+
 async function writeRequestBody(request, destination, maximumBytes) {
   let received = 0;
   request.on('data', (chunk) => {
@@ -44,6 +72,8 @@ export function createStudyServer(options = {}) {
       DEFAULT_RESULTS_ROOT,
   );
   const maximumBytes = options.maximumBytes ?? 256 * 1024 * 1024;
+  const requestOpenAI =
+    options.openAIRequest ?? createOpenAIRequester(options.openAIOptions);
   return createServer(async (request, response) => {
     response.setHeader('access-control-allow-origin', '*');
     response.setHeader(
@@ -61,6 +91,32 @@ export function createStudyServer(options = {}) {
       json(response, 200, { ok: true, resultsRoot });
       return;
     }
+    if (request.method === 'GET' && url.pathname === '/api/llm/health') {
+      json(response, 200, {
+        ok: true,
+        configured: Boolean(
+          options.openAIRequest ||
+          options.openAIOptions?.apiKey ||
+          process.env.OPENAI_API_KEY,
+        ),
+        decision1: {
+          model:
+            process.env.OPENAI_DECISION_1_MODEL ??
+            process.env.OPENAI_MODEL ??
+            'gpt-5.6',
+          reasoningEffort: 'low',
+        },
+        decision2: {
+          model:
+            process.env.OPENAI_DECISION_2_MODEL ??
+            process.env.OPENAI_MODEL ??
+            'gpt-5.6',
+          reasoningEffort: 'medium',
+        },
+        store: false,
+      });
+      return;
+    }
     const artifactMatch = url.pathname.match(
       /^\/api\/study\/sessions\/([^/]+)\/([^/]+)\/artifacts\/([^/]+)$/,
     );
@@ -68,6 +124,25 @@ export function createStudyServer(options = {}) {
       /^\/api\/study\/sessions\/([^/]+)\/([^/]+)\/finalize$/,
     );
     try {
+      const llmMatch = url.pathname.match(
+        /^\/api\/llm\/(decision-1|decision-2)$/,
+      );
+      if (request.method === 'POST' && llmMatch) {
+        if (!llmOriginAllowed(request)) {
+          json(response, 403, { ok: false, error: 'Origin not allowed.' });
+          return;
+        }
+        const payload = await readJson(request);
+        validateLlmRequest(payload);
+        const result = await requestOpenAI({
+          stage: llmMatch[1],
+          prompt: payload.prompt,
+          promptVersion: payload.promptVersion,
+          outputSchema: payload.outputSchema,
+        });
+        json(response, 200, result);
+        return;
+      }
       if (request.method === 'PUT' && artifactMatch) {
         const [, participantId, sessionId, filename] = artifactMatch.map(
           (value) => decodeURIComponent(value),
@@ -115,9 +190,12 @@ export function createStudyServer(options = {}) {
     } catch (error) {
       json(
         response,
-        error instanceof Error && error.message.startsWith('Invalid')
+        error instanceof SyntaxError ||
+          (error instanceof Error && error.message.startsWith('Invalid'))
           ? 400
-          : 500,
+          : error instanceof Error && error.message.startsWith('OPENAI_API_KEY')
+            ? 503
+            : 500,
         {
           ok: false,
           error: error instanceof Error ? error.message : String(error),

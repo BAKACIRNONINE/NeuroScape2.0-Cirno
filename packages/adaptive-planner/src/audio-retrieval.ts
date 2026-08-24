@@ -435,4 +435,57 @@ export function validateDecision2Selection(
     throw new Error(
       `Decision 2 patch assets are missing from selectedAssetIds: ${unreported.join(', ')}`,
     );
+  const candidateById = new Map(
+    input.candidates.map((candidate) => [candidate.assetId, candidate]),
+  );
+  const layerErrors = [
+    ...(result.patch.upsertAmbient ?? []).map((item) => ({
+      assetId: item.assetId,
+      expected: 'ambient',
+    })),
+    ...(result.patch.upsertAction ?? []).map((item) => ({
+      assetId: item.assetId,
+      expected: 'action',
+    })),
+    ...(result.patch.upsertEvent ?? []).map((item) => ({
+      assetId: item.assetId,
+      expected: 'event',
+    })),
+  ].filter(
+    ({ assetId, expected }) => candidateById.get(assetId)?.layer !== expected,
+  );
+  if (layerErrors.length)
+    throw new Error(
+      `Decision 2 placed assets in the wrong sound layer: ${layerErrors
+        .map(({ assetId, expected }) => `${assetId}→${expected}`)
+        .join(', ')}`,
+    );
+  const gainErrors = [
+    ...(result.patch.upsertAmbient ?? []),
+    ...(result.patch.upsertAction ?? []),
+    ...(result.patch.upsertEvent ?? []),
+  ].filter(
+    (item) =>
+      Math.abs(
+        item.gain - (candidateById.get(item.assetId)?.recommendedVolume ?? -1),
+      ) > 1e-6,
+  );
+  if (gainErrors.length)
+    throw new Error(
+      `Decision 2 must use authored recommendedVolume: ${gainErrors.map((item) => item.assetId).join(', ')}`,
+    );
+  const durationErrors = (result.patch.upsertEvent ?? []).filter((item) => {
+    const candidate = candidateById.get(item.assetId);
+    const authoredSeconds =
+      candidate?.defaultMotion.durationSec ?? candidate?.autoDeleteAfterSec;
+    return (
+      authoredSeconds !== null &&
+      authoredSeconds !== undefined &&
+      item.durationMs !== authoredSeconds * 1_000
+    );
+  });
+  if (durationErrors.length)
+    throw new Error(
+      `Decision 2 must use authored event motion/lifecycle duration: ${durationErrors.map((item) => item.assetId).join(', ')}`,
+    );
 }

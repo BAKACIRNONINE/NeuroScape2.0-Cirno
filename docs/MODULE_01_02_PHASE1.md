@@ -1,4 +1,4 @@
-# Module 01/02 Phase 1: Runnable Mock Integration
+# Module 01/02 Phase 1: OpenAI-Enabled Integration
 
 This branch rebuilds Modules 01 and 02 without relying on the earlier placeholders. It provides a deterministic, testable seam from calibration-shaped mock data to the existing Module 03 scene controller and Module 04 spatial-audio frontend.
 
@@ -16,6 +16,13 @@ Open the Vite URL, enter a participant ID, and choose one of the two Phase 1 mod
 
 - **Fast mock test** advances the 10-minute logical session at 10× speed (about one minute of wall time). Audio clips keep their natural playback rate, so the captured mix is about one wall-clock minute.
 - **Real-time study** advances at 1× speed and captures the complete approximately 10-minute spatial-audio mix.
+
+Then choose a planner provider:
+
+- **OpenAI · GPT-5.6** uses the real two-stage Responses API planner. Decision 1 uses low reasoning effort and Decision 2 uses medium reasoning effort.
+- **Offline mock** preserves the deterministic provider for development, regression tests, and sessions where API usage is not desired.
+
+The repository-root `.env` must contain `OPENAI_API_KEY` for OpenAI mode. The local backend loads the key; it is never exposed through Vite. Requests use `store: false`. The participant folder still stores the complete inspectable prompt, JSON Schema, structured output, model/response ID, token usage, and concise rationale for later analysis.
 
 Starting either mode enables browser audio and starts master-output capture from the same post-HRTF mix sent to the headphones. If the browser does not support `MediaRecorder`, the session continues and all non-audio study data is still saved.
 
@@ -47,8 +54,8 @@ The Summary page also offers **Download Study ZIP**. This is an independent fall
 1. `createMockTbrReplay()` emits one quality-annotated log-TBR epoch every 10 session seconds.
 2. `AttentionInterpreter` applies the individual calibration anchors and computes current state, trend, variability, duration, confidence, and phase.
 3. `evaluateEligibility()` checks only hard prerequisites: calibration usability, phase, valid-window count, confidence, and cooldown.
-4. `MockDecisionProvider` implements the Decision 1 interface (`Should adapt?`).
-5. `MockPlanningProvider` implements Decision 2 (`How to adapt?`) and selects from the mock sound knowledge base.
+4. `OpenAIDecisionProvider` calls the local backend for Decision 1 (`Should adapt?`) using GPT-5.6 with low reasoning effort.
+5. Only when Decision 1 returns adapt, `OpenAIPlanningProvider` calls Decision 2 (`How to adapt?`) using GPT-5.6 with medium reasoning effort and the retrieved Audio Library candidates.
 6. `mergePlanPatch()` merges a soundscape patch into a complete `SceneJourneyPlan`.
 7. Module 03 validates and applies the plan without resetting the runtime.
 8. Module 04 renders the resulting world state using the existing audio catalog and HRTF chain.
@@ -61,14 +68,16 @@ Decision 2 is never called when Decision 1 returns maintain.
 
 The Decision 2 prompt forbids invented assets and numbers. The engine rejects any selected asset ID that was not in the retrieved candidate set. Existing dotted asset IDs remain temporary aliases only for older Module 03/04 demonstrations.
 
+The `MockDecisionProvider` and `MockPlanningProvider` remain available behind the **Offline mock** option. Decision 2 is never called when Decision 1 returns maintain. An API failure is logged as `llm-error`; the runtime maintains the current soundscape rather than silently switching to mock reasoning.
+
 ## Replacement seams for later phases
 
 | Phase 1 component        | Later replacement               | Stable interface       |
 | ------------------------ | ------------------------------- | ---------------------- |
 | `mockCalibrationProfile` | calibration repo output adapter | `CalibrationProfile`   |
 | `createMockTbrReplay()`  | Muse/live EEG stream            | `TbrEpoch`             |
-| `MockDecisionProvider`   | OpenAI Decision 1 provider      | `DecisionProvider`     |
-| `MockPlanningProvider`   | OpenAI Decision 2 provider      | `PlanningProvider`     |
+| `OpenAIDecisionProvider` | production endpoint/deployment  | `DecisionProvider`     |
+| `OpenAIPlanningProvider` | production endpoint/deployment  | `PlanningProvider`     |
 | `phase1SoundKnowledge`   | production audio database       | asset metadata records |
 
 ## Eligibility design rationale

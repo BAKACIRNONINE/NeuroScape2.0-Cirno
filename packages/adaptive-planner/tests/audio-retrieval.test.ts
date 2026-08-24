@@ -116,4 +116,37 @@ describe('Decision 2 audio-library retrieval', () => {
       'outside the retrieved candidate set',
     );
   });
+
+  it('rejects a candidate placed in the wrong layer or with invented gain', () => {
+    const input = prepareDecision2Input(
+      context(),
+      decision('gently-reorient'),
+      phase1Config,
+    );
+    const candidate = input.candidates[0]!;
+    const result: PlanningResult = {
+      patch: {
+        reasoningSummary: 'invalid',
+        upsertAmbient: [
+          {
+            id: 'wrong-layer',
+            assetId: candidate.assetId,
+            mode: 'global',
+            gain: 0.99,
+            active: true,
+          },
+        ],
+      },
+      selectedAssetIds: [candidate.assetId],
+      candidateAssetIds: input.candidates.map((item) => item.assetId),
+      promptVersion: input.promptVersion,
+      prompt: input.prompt,
+      outputSchema: input.outputSchema,
+      rationale: 'invalid',
+      provider: 'test',
+    };
+    expect(() => validateDecision2Selection(result, input)).toThrow(
+      'wrong sound layer',
+    );
+  });
 });

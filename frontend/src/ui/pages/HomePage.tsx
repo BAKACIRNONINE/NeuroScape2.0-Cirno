@@ -8,6 +8,7 @@ export type AdaptiveRunMode = 'mock-fast' | 'study-realtime';
 export interface AdaptiveSessionIntent {
   participantId: string;
   runMode: AdaptiveRunMode;
+  plannerMode: 'openai' | 'mock';
 }
 export function HomePage({
   onStart,
@@ -28,6 +29,7 @@ export function HomePage({
   const [participantId, setParticipantId] = useState('P001');
   const [adaptiveRunMode, setAdaptiveRunMode] =
     useState<AdaptiveRunMode>('mock-fast');
+  const [plannerMode, setPlannerMode] = useState<'openai' | 'mock'>('openai');
   const validParticipantId = /^[A-Za-z0-9_-]{1,64}$/.test(participantId);
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -105,6 +107,22 @@ export function HomePage({
               Study · realtime
             </button>
           </div>
+          <div className="source-toggle" aria-label="Planner provider">
+            <button
+              type="button"
+              className={plannerMode === 'openai' ? 'selected' : ''}
+              onClick={() => setPlannerMode('openai')}
+            >
+              OpenAI · GPT-5.6
+            </button>
+            <button
+              type="button"
+              className={plannerMode === 'mock' ? 'selected' : ''}
+              onClick={() => setPlannerMode('mock')}
+            >
+              Offline mock
+            </button>
+          </div>
           {!validParticipantId && (
             <small>Use 1–64 letters, numbers, hyphens, or underscores.</small>
           )}
@@ -112,7 +130,11 @@ export function HomePage({
             className="demo-launch"
             disabled={!validParticipantId}
             onClick={() =>
-              onAdaptiveDemo({ participantId, runMode: adaptiveRunMode })
+              onAdaptiveDemo({
+                participantId,
+                runMode: adaptiveRunMode,
+                plannerMode,
+              })
             }
           >
             Phase 1 · adaptive EEG mock → spatial audio

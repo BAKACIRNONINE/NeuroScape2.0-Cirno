@@ -89,6 +89,19 @@ export interface AdaptationDecision {
   scope: AdaptationScope;
   rationale: string;
   provider: string;
+  promptVersion?: string;
+  prompt?: string;
+  outputSchema?: Record<string, unknown>;
+  model?: string;
+  responseId?: string;
+  usage?: LlmUsage;
+}
+
+export interface LlmUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  reasoningTokens?: number;
 }
 
 export interface SoundscapePlanPatch {
@@ -110,6 +123,9 @@ export interface PlanningResult {
   outputSchema: Record<string, unknown>;
   rationale: string;
   provider: string;
+  model?: string;
+  responseId?: string;
+  usage?: LlmUsage;
 }
 
 export interface Decision2Candidate {

@@ -24,7 +24,9 @@ npm install
 npm run dev
 ```
 
-Open the displayed Vite URL. Choose the Phase 1 adaptive flow for participant-scoped mock sessions, or **Demo / Integration · deterministic forest** for a backend-free validation run. Adaptive sessions automatically save study artifacts under `study-results/` and also expose a ZIP download on the Summary page.
+Put `OPENAI_API_KEY` in a repository-root `.env` file (see `.env.example`). `npm run dev` loads it only in the localhost backend; the key is never bundled into Vite or sent to the browser.
+
+Open the displayed Vite URL. Choose the Phase 1 adaptive flow, then select **OpenAI · GPT-5.6** for real Decision 1/2 reasoning or **Offline mock** for a no-cost deterministic check. Adaptive sessions automatically save study artifacts under `study-results/` and also expose a ZIP download on the Summary page.
 
 ## Validation
 

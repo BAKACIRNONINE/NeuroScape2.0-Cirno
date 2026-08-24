@@ -20,7 +20,11 @@ describe('Phase 1 adaptive end-to-end harness', () => {
       userPrompt: 'adaptive e2e test',
       eegMode: 'recorded',
     });
-    harness.start({ sessionId: 'adaptive-e2e', runMode: 'mock-fast' });
+    harness.start({
+      sessionId: 'adaptive-e2e',
+      runMode: 'mock-fast',
+      plannerMode: 'mock',
+    });
     for (let index = 0; index < 600; index += 1) await harness.tick(1_000);
     const recording = recordingStore.stop();
     expect(harness.getState().status).toBe('ended');

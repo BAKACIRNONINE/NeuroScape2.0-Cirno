@@ -3,7 +3,7 @@ import type { PlannerStatusPayload, SessionStatusPayload } from './protocol.js';
 import type { RuntimeWorldState } from './runtime-world-state.js';
 import type { SceneJourneyPlan } from './scene-journey-plan.js';
 
-export const RECORDED_SESSION_SCHEMA_VERSION = '1.1';
+export const RECORDED_SESSION_SCHEMA_VERSION = '1.2';
 export interface RecordedSessionMetadata {
   sessionId: string;
   protocolVersion: string;
@@ -15,6 +15,7 @@ export interface RecordedSessionMetadata {
   eegMode?: 'muse' | 'recorded';
   participantId?: string;
   runMode?: 'mock-fast' | 'study-realtime';
+  plannerMode?: 'openai' | 'mock';
   startedAtIso?: string;
 }
 export interface TimestampedRecord<T> {
@@ -29,6 +30,7 @@ export interface AdaptiveTraceRecord {
     | 'eligibility'
     | 'decision-1'
     | 'decision-2'
+    | 'llm-error'
     | 'plan-applied';
   source: 'deterministic' | 'mock-llm' | 'openai';
   summary: string;
