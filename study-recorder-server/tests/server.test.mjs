@@ -128,7 +128,7 @@ describe('study recorder server', () => {
       model: 'gpt-5.6',
       reasoning: { effort: 'low', context: 'current_turn' },
       store: false,
-      max_output_tokens: 700,
+      max_output_tokens: 900,
       text: { format: { type: 'json_schema', strict: true } },
     });
     expect(requests[1]).toMatchObject({
@@ -136,5 +136,74 @@ describe('study recorder server', () => {
       store: false,
       max_output_tokens: 2_000,
     });
+  });
+
+  it('reads structured text from a raw Responses REST payload', async () => {
+    const requester = createOpenAIRequester({
+      apiKey: 'test-key',
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            id: 'resp_raw',
+            status: 'completed',
+            model: 'gpt-5.6-test',
+            output: [
+              {
+                type: 'message',
+                content: [
+                  {
+                    type: 'output_text',
+                    text: '{"shouldAdapt":false}',
+                  },
+                ],
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    });
+
+    const response = await requester({
+      stage: 'decision-1',
+      prompt: 'test',
+      promptVersion: 'v1',
+      outputSchema: {
+        name: 'test_schema',
+        strict: true,
+        schema: { type: 'object', additionalProperties: false },
+      },
+    });
+
+    expect(response.output).toEqual({ shouldAdapt: false });
+    expect(response.responseId).toBe('resp_raw');
+  });
+
+  it('reports the Responses API incomplete reason when no text is returned', async () => {
+    const requester = createOpenAIRequester({
+      apiKey: 'test-key',
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            id: 'resp_incomplete',
+            status: 'incomplete',
+            incomplete_details: { reason: 'max_output_tokens' },
+            output: [],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    });
+
+    await expect(
+      requester({
+        stage: 'decision-1',
+        prompt: 'test',
+        promptVersion: 'v1',
+        outputSchema: {
+          name: 'test_schema',
+          strict: true,
+          schema: { type: 'object', additionalProperties: false },
+        },
+      }),
+    ).rejects.toThrow('incomplete (max_output_tokens)');
   });
 });
