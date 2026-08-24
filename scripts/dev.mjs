@@ -1,11 +1,28 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-const calibrationPython =
-  process.env.NEUROSCAPE_PYTHON ??
-  (process.platform === 'win32'
-    ? 'eeg-calibration/.venv/Scripts/python.exe'
-    : 'eeg-calibration/.venv/bin/python');
+const virtualEnvironmentPython = process.platform === 'win32'
+  ? 'eeg-calibration/.venv/Scripts/python.exe'
+  : 'eeg-calibration/.venv/bin/python';
+const calibrationPython = existsSync(virtualEnvironmentPython)
+  ? virtualEnvironmentPython
+  : process.env.NEUROSCAPE_PYTHON;
+
+if (!calibrationPython) {
+  console.error('Calibration environment is missing. Run `npm run calibration:setup` first.');
+  process.exit(1);
+}
+
+function spawnNpm(args) {
+  if (process.platform === 'win32') {
+    return spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd', ...args], {
+      stdio: 'inherit',
+    });
+  }
+
+  return spawn('npm', args, { stdio: 'inherit' });
+}
+
 const children = [
   spawn(
     calibrationPython,
@@ -22,8 +39,8 @@ const children = [
     ],
     { stdio: 'inherit' },
   ),
-  spawn(npm, ['run', 'study:server'], { stdio: 'inherit' }),
-  spawn(npm, ['run', 'dev:frontend'], { stdio: 'inherit' }),
+  spawnNpm(['run', 'study:server']),
+  spawnNpm(['run', 'dev:frontend']),
 ];
 
 let stopping = false;

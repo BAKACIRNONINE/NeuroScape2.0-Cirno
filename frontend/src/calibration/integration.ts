@@ -56,10 +56,15 @@ export class LiveEegEpochSource {
   #afterSampleIndex = -1;
   #epochNumber = 0;
 
+  constructor(private readonly profileSessionId?: string) {}
+
   async start(): Promise<void> {
-    const result = await calibrationRequest<LiveStartResponse>('/live/start', {
-      method: 'POST',
-    });
+    const profilePath = this.profileSessionId
+      ? `/live/start/${encodeURIComponent(this.profileSessionId)}`
+      : '/live/start';
+    const result = await calibrationRequest<LiveStartResponse>(profilePath, {
+        method: 'POST',
+      });
     this.#afterSampleIndex = result.after_sample_index;
     this.#epochNumber = 0;
   }

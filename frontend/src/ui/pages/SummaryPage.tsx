@@ -32,9 +32,11 @@ const points = (values: readonly number[], width = 600, height = 130) =>
 export function SummaryPage({
   recording: supplied,
   onReplay,
+  onHome,
 }: {
   recording?: RecordedSession | null;
   onReplay?: () => void;
+  onHome?: () => void;
 }) {
   const stored = useSyncExternalStore(
     recordingStore.subscribe,
@@ -54,6 +56,7 @@ export function SummaryPage({
         <p className="flow-brand">NeuroScape</p>
         <h1>Session Reflection</h1>
         <p>No accepted session recording is available.</p>
+        {onHome && <button onClick={onHome}>Return Home</button>}
       </main>
     );
   const metrics = deriveSummary(recording),
@@ -95,6 +98,7 @@ export function SummaryPage({
           <span>Session Reflection · recorded data</span>
         </div>
         <div className="summary-actions">
+          {onHome && <button onClick={onHome}>Return Home</button>}
           <button onClick={() => downloadRecording(recording)}>
             Export Recording
           </button>

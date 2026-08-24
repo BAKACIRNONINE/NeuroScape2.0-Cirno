@@ -31,7 +31,7 @@ export const phase1Config: AdaptivePlannerConfig = Object.freeze({
   closingStartMs: 540_000,
   epochDurationMs: 10_000,
   analysisWindowMs: 60_000,
-  checkpointIntervalMs: 30_000,
+  checkpointIntervalMs: 40_000,
   minimumValidEpochs: 5,
   trendWindowCount: 3,
   focusLeaningThreshold: 0.34,

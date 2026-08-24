@@ -27,7 +27,8 @@
       radial-gradient(circle at 90% 0, #dce8df, transparent 32rem), #edf1eb;
   }
   button,
-  input {
+  input,
+  select {
     font: inherit;
   }
   button,
@@ -70,6 +71,15 @@
     color: var(--red);
   }
   input {
+    width: 100%;
+    min-height: 44px;
+    padding: 0 14px;
+    border: 1px solid #aebdb5;
+    border-radius: 4px;
+    background: white;
+    color: var(--ink);
+  }
+  select {
     width: 100%;
     min-height: 44px;
     padding: 0 14px;
@@ -219,6 +229,30 @@
     border: 1px solid var(--line);
     box-shadow: var(--shadow);
     padding: clamp(22px, 4vw, 36px);
+  }
+  .saved-profile-launcher {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) minmax(360px, 1.4fr);
+    align-items: center;
+    gap: 24px;
+    margin-bottom: 24px;
+    border-left: 5px solid var(--green);
+  }
+  .saved-profile-launcher h2 {
+    margin-bottom: 6px;
+  }
+  .saved-profile-launcher > div > p:last-child {
+    margin: 0;
+    color: var(--muted);
+  }
+  .saved-profile-controls {
+    display: grid;
+    gap: 10px;
+  }
+  .saved-profile-error {
+    grid-column: 1 / -1;
+    margin: 0;
+    color: var(--red);
   }
   .section-heading {
     display: flex;
@@ -637,6 +671,21 @@
     max-width: 520px;
     align-self: center;
   }
+  .quality-banner-detail {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 20px;
+  }
+  .quality-banner .adaptive-system-button {
+    flex: 0 0 auto;
+    border-color: white;
+    background: white;
+    color: var(--green-dark);
+  }
+  .quality-banner .adaptive-system-button:hover {
+    background: #f1f8f5;
+  }
   .quality-report,
   .profile-panel {
     grid-column: 1 / -1;
@@ -1054,6 +1103,9 @@
     .session-panel {
       grid-column: 1 / -1;
     }
+    .saved-profile-launcher {
+      grid-template-columns: 1fr;
+    }
     .destination,
     .condition-timers {
       grid-template-columns: 1fr;
@@ -1071,6 +1123,13 @@
     }
     .quality-banner {
       flex-direction: column;
+    }
+    .quality-banner-detail {
+      align-items: stretch;
+      flex-direction: column;
+    }
+    .quality-banner .adaptive-system-button {
+      width: 100%;
     }
     .quality-condition-grid,
     .quality-overview,

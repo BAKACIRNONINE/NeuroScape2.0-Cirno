@@ -1,5 +1,19 @@
 import type { Profile, Status } from '../types';
 
+export interface SavedCalibrationSession {
+  participant_id: string;
+  session_id: string;
+  created_at: string;
+  completed_at?: string;
+}
+
+export interface SavedCalibrationDetails {
+  session_id: string;
+  profile?: Profile;
+  profile_compatible?: boolean;
+  profile_error?: string;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/calibration${path}`, {
     headers: { 'Content-Type': 'application/json' },
@@ -65,4 +79,7 @@ export const api = {
     }),
   reset: () => request('/calibration/reset', { method: 'POST' }),
   result: () => request<Profile>('/calibration/result'),
+  sessions: () => request<SavedCalibrationSession[]>('/sessions'),
+  session: (sessionId: string) =>
+    request<SavedCalibrationDetails>(`/sessions/${encodeURIComponent(sessionId)}`),
 };

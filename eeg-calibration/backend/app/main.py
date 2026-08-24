@@ -132,6 +132,18 @@ def start_live_session() -> dict:
         raise HTTPException(409, str(exc)) from exc
 
 
+@app.post("/api/live/start/{session_id}")
+def start_saved_live_session(session_id: str) -> dict:
+    try:
+        return service.start_saved_live_session(session_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except IncompatibleCalibrationProfile as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @app.get("/api/live/epoch")
 def live_epoch(after_sample_index: int = -1) -> dict:
     return service.live_epoch(after_sample_index)

@@ -9,7 +9,7 @@ import type {
   PlanningResult,
 } from './types.js';
 
-export const DECISION_2_PROMPT_VERSION = 'decision-2-audio-library-v3';
+export const DECISION_2_PROMPT_VERSION = 'decision-2-audio-library-v4';
 
 function authoredEventDurationMs(candidate: Decision2Candidate): number {
   return (
@@ -216,6 +216,13 @@ export function buildDecision2Prompt(
   return [
     'You are NeuroScape Decision 2: How to Adapt.',
     'Plan a restrained but perceptibly layered, neuro-informed soundscape patch that realizes the supplied Decision 1 goal and scope. When appropriate, combine one subtle ambient adjustment with at most one event or body-anchored action.',
+    'Apply this goal-to-layer policy whenever restrictions permit and a compatible candidate exists:',
+    '- gently-reorient: prioritize one perceptible event. An ambient adjustment may accompany it, but ambient-only changes should not satisfy this goal.',
+    '- support-grounding: prioritize one body-anchored action. An ambient adjustment may accompany it, but ambient-only changes should not satisfy this goal.',
+    '- refresh-engagement: prioritize a novel event for within-scene scope, or combine a continuous scene transition with one compatible event when scene-transition scope is authorized.',
+    '- reduce-stimulation: remove or reduce event/action activity; do not add a salient cue merely to create change.',
+    'If the most recent adaptation selected only ambient assets, prioritize an eligible event or action in this patch instead of making another ambient-only change.',
+    'At least one newly selected asset should create an actually audible source change; do not claim adaptation while merely restating the current plan.',
     'Use only assetId values in candidates. Never invent an asset, location, motion, duration, gain, or numerical range.',
     'Treat candidate metadata as authoritative: description, scene, layer, tags, loop, intensity, suddenness, useWhen, avoidWhen, spatialBehavior, defaultPosition, defaultMotion.durationSec, autoDeleteAfterSec, fades, and recommendedVolume.',
     'For an event, durationMs MUST equal defaultMotion.durationSec * 1000 when defaultMotion.durationSec is non-null; otherwise it MUST equal autoDeleteAfterSec * 1000. autoDeleteAfterSec is only the fallback lifecycle when no authored motion duration exists. A looping asset may remain active until a later patch removes it.',

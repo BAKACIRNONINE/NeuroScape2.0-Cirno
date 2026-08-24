@@ -5,8 +5,10 @@ import {
   MockPlanningProvider,
   createMockTbrReplay,
   initialForestPlan,
+  mergePlanPatch,
   mockCalibrationProfile,
   phase1Config,
+  type SoundscapePlanPatch,
 } from '../src/index.js';
 
 const engine = () =>
@@ -27,7 +29,14 @@ describe('adaptive planner Phase 1', () => {
       if (result) checkpoints.push(result);
     }
     expect(checkpoints[0]?.state.timestampMs).toBe(60_000);
-    expect(checkpoints.at(-1)?.state.timestampMs).toBe(600_000);
+    const lastCheckpointMs =
+      phase1Config.openingDurationMs +
+      Math.floor(
+        (phase1Config.sessionDurationMs - phase1Config.openingDurationMs) /
+          phase1Config.checkpointIntervalMs,
+      ) *
+        phase1Config.checkpointIntervalMs;
+    expect(checkpoints.at(-1)?.state.timestampMs).toBe(lastCheckpointMs);
     expect(checkpoints.at(-1)?.eligibility.reasons).toContain('closing_phase');
     expect(checkpoints.some((item) => item.decision?.shouldAdapt)).toBe(true);
     expect(checkpoints.some((item) => item.plan?.soundscape.event.length)).toBe(
@@ -74,5 +83,34 @@ describe('adaptive planner Phase 1', () => {
     for (const epoch of createMockTbrReplay().slice(0, 10))
       await planner.ingest(epoch);
     expect(planningCalls).toBe(0);
+  });
+
+  it('removes schema-required null locations from global ambient patches', () => {
+    const patch = {
+      reasoningSummary: 'Replace the global forest bed.',
+      upsertAmbient: [
+        {
+          id: 'forest-bed',
+          assetId: 'forest_ambient_bed_02',
+          mode: 'global',
+          locationId: null,
+          gain: 0.44,
+          active: true,
+        },
+      ],
+    } as unknown as SoundscapePlanPatch;
+
+    const plan = mergePlanPatch(initialForestPlan, patch, 330_000);
+    const forestBed = plan.soundscape.ambient.find(
+      (item) => item.id === 'forest-bed',
+    );
+    expect(forestBed).toEqual({
+      id: 'forest-bed',
+      assetId: 'forest_ambient_bed_02',
+      mode: 'global',
+      gain: 0.44,
+      active: true,
+    });
+    expect(forestBed).not.toHaveProperty('locationId');
   });
 });

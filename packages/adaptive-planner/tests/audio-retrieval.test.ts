@@ -77,6 +77,8 @@ describe('Decision 2 audio-library retrieval', () => {
     expect(input.prompt).toContain('Use only assetId values in candidates');
     expect(input.prompt).toContain('listenerReachableLocations');
     expect(input.prompt).toContain('restrained but perceptibly layered');
+    expect(input.prompt).toContain('gently-reorient: prioritize one perceptible event');
+    expect(input.prompt).toContain('ambient-only changes should not satisfy this goal');
     expect(input.outputSchema).toMatchObject({
       name: 'neuroscape_decision_2',
       strict: true,
@@ -106,6 +108,9 @@ describe('Decision 2 audio-library retrieval', () => {
     );
     expect(input.candidates.some((item) => item.layer === 'action')).toBe(true);
     expect(input.candidates.some((item) => item.layer === 'event')).toBe(false);
+    expect(input.prompt).toContain(
+      'support-grounding: prioritize one body-anchored action',
+    );
   });
 
   it('uses family cooldown to withhold all recently used bird variants', () => {

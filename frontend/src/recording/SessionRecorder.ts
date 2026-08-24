@@ -15,11 +15,13 @@ import { immutableCopy } from '../runtime/validation.js';
 export interface RecordingStartOptions {
   sessionId: string;
   userPrompt?: string;
-  eegMode?: 'muse' | 'recorded';
+  eegMode?: 'muse' | 'recorded' | 'none';
   participantId?: string;
-  runMode?: 'mock-fast' | 'study-realtime';
-  plannerMode?: 'openai' | 'mock';
+  runMode?: 'mock-fast' | 'study-realtime' | 'non-adaptive';
+  plannerMode?: 'openai' | 'mock' | 'fixed';
   startedAtIso?: string;
+  controlAudioId?: string;
+  controlTrajectoryId?: string;
   calibrationProfile?: RecordedCalibrationProfile;
 }
 export class SessionRecorder {
@@ -49,6 +51,8 @@ export class SessionRecorder {
         runMode: options.runMode,
         plannerMode: options.plannerMode,
         startedAtIso: options.startedAtIso,
+        controlAudioId: options.controlAudioId,
+        controlTrajectoryId: options.controlTrajectoryId,
       },
       calibrationProfile: options.calibrationProfile
         ? structuredClone(options.calibrationProfile)

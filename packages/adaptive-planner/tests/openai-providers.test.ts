@@ -82,6 +82,12 @@ describe('OpenAI planner providers', () => {
     expect(String(requestBody?.prompt)).toContain(
       'Eligibility does not itself mean an adaptation is necessary',
     );
+    expect(String(requestBody?.prompt)).toContain(
+      'do not maintain merely because the state is intermediate',
+    );
+    expect(String(requestBody?.prompt)).toContain(
+      'high-confidence mind-wandering-leaning attention, normally adapt',
+    );
     expect(result.provider).toBe('openai-responses');
     expect(result.model).toBe('gpt-5.6-2026-08-01');
     expect(result.usage?.totalTokens).toBe(120);

@@ -12,11 +12,13 @@ export interface RecordedSessionMetadata {
   startState: string;
   endState: string;
   userPrompt?: string;
-  eegMode?: 'muse' | 'recorded';
+  eegMode?: 'muse' | 'recorded' | 'none';
   participantId?: string;
-  runMode?: 'mock-fast' | 'study-realtime';
-  plannerMode?: 'openai' | 'mock';
+  runMode?: 'mock-fast' | 'study-realtime' | 'non-adaptive';
+  plannerMode?: 'openai' | 'mock' | 'fixed';
   startedAtIso?: string;
+  controlAudioId?: string;
+  controlTrajectoryId?: string;
 }
 export interface RecordedCalibrationProfile {
   profileId: string;
@@ -40,6 +42,7 @@ export interface AdaptiveTraceRecord {
     | 'decision-1'
     | 'decision-2'
     | 'llm-error'
+    | 'plan-error'
     | 'plan-applied';
   source: 'deterministic' | 'live-eeg' | 'mock-llm' | 'openai';
   summary: string;

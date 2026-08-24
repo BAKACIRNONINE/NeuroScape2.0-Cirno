@@ -15,6 +15,16 @@ function mergeById<T extends { id: string }>(
   return [...merged.values()];
 }
 
+function normalizeAmbient(
+  items: SceneJourneyPlan['soundscape']['ambient'],
+): SceneJourneyPlan['soundscape']['ambient'] {
+  return items.map((item) => {
+    if (item.mode !== 'global') return item;
+    const { locationId: _locationId, ...globalItem } = item;
+    return globalItem;
+  });
+}
+
 export function mergePlanPatch(
   current: SceneJourneyPlan,
   patch: SoundscapePlanPatch,
@@ -32,10 +42,12 @@ export function mergePlanPatch(
     reasoningSummary: patch.reasoningSummary,
     userJourney: structuredClone(patch.journey ?? current.userJourney),
     soundscape: {
-      ambient: mergeById(
-        current.soundscape.ambient,
-        patch.upsertAmbient,
-        patch.removeIds,
+      ambient: normalizeAmbient(
+        mergeById(
+          current.soundscape.ambient,
+          patch.upsertAmbient,
+          patch.removeIds,
+        ),
       ),
       action: mergeById(
         current.soundscape.action,

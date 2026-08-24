@@ -787,6 +787,16 @@ class CalibrationService:
 
     def start_live_session(self) -> dict:
         profile = self.calibration_result()
+        return self._live_session_start(profile)
+
+    def start_saved_live_session(self, session_id: str) -> dict:
+        details = self.store.details(session_id)
+        profile = details.get("profile")
+        if profile is None:
+            raise FileNotFoundError("No calibration profile is available for this session")
+        return self._live_session_start(validate_calibration_profile(profile))
+
+    def _live_session_start(self, profile: dict) -> dict:
         if not profile.get("ready_to_continue"):
             raise ValueError("Calibration quality is insufficient for an adaptive session")
         samples = self.receiver.snapshot_samples()

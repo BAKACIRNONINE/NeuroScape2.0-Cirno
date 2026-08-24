@@ -21,6 +21,7 @@ import {
   longIntegrationHarness,
   spatialDiagnosticHarness,
 } from '../integration/IntegrationHarness.js';
+import { FixedAudioSessionPage } from '../ui/pages/FixedAudioSessionPage.js';
 import { adaptiveIntegrationHarness } from '../integration/AdaptiveIntegrationHarness.js';
 import { audioEngine } from '../audio/AudioEngine.js';
 import {
@@ -41,6 +42,7 @@ type Page =
 export function App() {
   const finalizing = useRef(false);
   const audioCaptureError = useRef<string | null>(null);
+  const returnHomeAfterFinalize = useRef(false);
   const [page, setPage] = useState<Page>('home');
   const [calibrationIntent, setCalibrationIntent] =
     useState<CalibrationSessionIntent>({
@@ -48,8 +50,15 @@ export function App() {
       durationMinutes: 10,
     });
   const [mode, setMode] = useState<
-    'live' | 'adaptive' | 'demo' | 'long-demo' | 'diagnostic' | 'replay'
+    | 'live'
+    | 'adaptive'
+    | 'non-adaptive'
+    | 'demo'
+    | 'long-demo'
+    | 'diagnostic'
+    | 'replay'
   >('live');
+  const [realTimeRestartEnabled, setRealTimeRestartEnabled] = useState(false);
   const sessionStatus = useStore(
     runtimeStore,
     (state) => state.sessionRuntime.status,
@@ -94,7 +103,7 @@ export function App() {
             audioCaptureError.current ? [audioCaptureError.current] : [],
           );
           studyArtifactStore.setBundle(bundle);
-          setPage('summary');
+          setPage(returnHomeAfterFinalize.current ? 'home' : 'summary');
           studyArtifactStore.setBackend({ status: 'saving' });
           try {
             const directory = await saveBundleToBackend(bundle);
@@ -105,12 +114,14 @@ export function App() {
               error: error instanceof Error ? error.message : String(error),
             });
           }
-        } else setPage('summary');
+        } else setPage(returnHomeAfterFinalize.current ? 'home' : 'summary');
+        returnHomeAfterFinalize.current = false;
         finalizing.current = false;
       })();
     }
   }, [page, sessionStatus]);
   const start = (intent: SessionIntent) => {
+    setRealTimeRestartEnabled(false);
     setMode('live');
     recordingStore.start({
       sessionId: liveSessionId,
@@ -122,6 +133,7 @@ export function App() {
     setPage('loading');
   };
   const startDemo = () => {
+    setRealTimeRestartEnabled(false);
     liveRuntimeClient.disconnect();
     setMode('demo');
     recordingStore.start({
@@ -134,6 +146,7 @@ export function App() {
     setPage('session');
   };
   const startAdaptive = async (intent: AdaptiveSessionIntent) => {
+    setRealTimeRestartEnabled(false);
     if (intent.plannerMode === 'openai') {
       try {
         const response = await fetch('/api/llm/health');
@@ -156,6 +169,7 @@ export function App() {
     studyArtifactStore.reset();
     audioCaptureError.current = null;
     const sessionId = `session-${new Date().toISOString().replaceAll(/\D/g, '')}-${crypto.randomUUID().slice(0, 8)}`;
+    runtimeStore.getState().resetSessionStreams();
     recordingStore.start({
       sessionId,
       participantId: intent.participantId,
@@ -185,11 +199,12 @@ export function App() {
         throw new Error(
           'OpenAI planner is not configured. Add OPENAI_API_KEY and restart npm run dev.',
         );
-      const epochSource = new LiveEegEpochSource();
+      const epochSource = new LiveEegEpochSource(profile.session_id);
       await epochSource.start();
       const plannerProfile = toPlannerCalibrationProfile(profile);
       liveRuntimeClient.disconnect();
       setMode('adaptive');
+      setRealTimeRestartEnabled(true);
       studyArtifactStore.reset();
       audioCaptureError.current = null;
       const sessionId = `session-${new Date().toISOString().replaceAll(/\D/g, '')}-${crypto.randomUUID().slice(0, 8)}`;
@@ -198,7 +213,7 @@ export function App() {
         participantId: profile.participant_id,
         runMode: 'study-realtime',
         plannerMode: 'openai',
-        userPrompt: `${calibrationIntent.durationMinutes}-minute adaptive session · live Muse EEG · calibration ${profile.session_id}`,
+        userPrompt: `10-minute adaptive session · live Muse EEG · calibration ${profile.session_id}`,
         eegMode: 'muse',
         startedAtIso: new Date().toISOString(),
         calibrationProfile: plannerProfile,
@@ -207,7 +222,7 @@ export function App() {
         sessionId,
         runMode: 'study-realtime',
         plannerMode: 'openai',
-        sessionDurationMs: calibrationIntent.durationMinutes * 60_000,
+        sessionDurationMs: 10 * 60_000,
         calibrationProfile: plannerProfile,
         epochSource,
       });
@@ -221,6 +236,7 @@ export function App() {
     }
   };
   const startLongDemo = () => {
+    setRealTimeRestartEnabled(false);
     liveRuntimeClient.disconnect();
     setMode('long-demo');
     recordingStore.start({
@@ -233,6 +249,7 @@ export function App() {
     setPage('session');
   };
   const startSpatialDiagnostic = () => {
+    setRealTimeRestartEnabled(false);
     liveRuntimeClient.disconnect();
     setMode('diagnostic');
     recordingStore.start({
@@ -244,14 +261,40 @@ export function App() {
     spatialDiagnosticHarness.start();
     setPage('session');
   };
+  const startNonAdaptive = (participantId: string) => {
+    liveRuntimeClient.disconnect();
+    setMode('non-adaptive');
+    setRealTimeRestartEnabled(false);
+    studyArtifactStore.reset();
+    audioCaptureError.current = null;
+    const sessionId = `session-${new Date().toISOString().replaceAll(/\D/g, '')}-${crypto.randomUUID().slice(0, 8)}`;
+    recordingStore.start({
+      sessionId,
+      participantId,
+      runMode: 'non-adaptive',
+      plannerMode: 'fixed',
+      eegMode: 'none',
+      userPrompt:
+        'Approved fixed 10-minute non-adaptive trajectory; no EEG and no runtime LLM',
+      startedAtIso: new Date().toISOString(),
+      controlAudioId: 'non-adaptive-10min-v1',
+      controlTrajectoryId: 'non-adaptive-trajectory-approved-v1',
+    });
+    runtimeStore
+      .getState()
+      .setSessionRuntime({
+        status: 'running',
+        elapsedTimeMs: 0,
+        plannerStatus: 'ready',
+        message: 'Playing shared pre-rendered non-adaptive control audio',
+      });
+    setPage('session');
+  };
   if (page === 'home')
     return (
       <HomePage
-        onStart={start}
-        onAdaptiveDemo={startAdaptive}
-        onDemo={startDemo}
-        onLongDemo={startLongDemo}
-        onSpatialDiagnostic={startSpatialDiagnostic}
+        onRealTime={startCalibratedAdaptive}
+        onNonAdaptive={startNonAdaptive}
         onCalibration={(intent) => {
           setCalibrationIntent(intent);
           setPage('calibration');
@@ -262,7 +305,8 @@ export function App() {
     return (
       <CalibrationPage
         initialParticipantId={calibrationIntent.participantId}
-        onContinue={startCalibratedAdaptive}
+        onContinue={async () => setPage('home')}
+        onHome={() => setPage('home')}
       />
     );
   if (page === 'loading') return <LoadingPage />;
@@ -278,11 +322,40 @@ export function App() {
   if (page === 'summary')
     return (
       <SummaryPage
+        onHome={() => setPage('home')}
         onReplay={() => {
           setMode('replay');
           setPage('session');
         }}
       />
     );
-  return <SessionPage mode={mode} />;
+  const restartCalibratedAdaptive = async (profile: Profile) => {
+    adaptiveIntegrationHarness.end(false);
+    recordingStore.stop();
+    try {
+      await audioEngine.stopRecording();
+    } catch {
+      // A missing/unsupported recording must not prevent a test restart.
+    }
+    await startCalibratedAdaptive(profile);
+  };
+  const returnFromSession = () => {
+    if (sessionStatus === 'ended' || !sessionRecorder.active) setPage('home');
+    else {
+      returnHomeAfterFinalize.current = true;
+      if (mode === 'adaptive') adaptiveIntegrationHarness.end();
+      else runtimeStore.getState().setSessionRuntime({ status: 'ended' });
+    }
+  };
+  if (mode === 'non-adaptive')
+    return <FixedAudioSessionPage onHome={returnFromSession} />;
+  return (
+    <SessionPage
+      mode={mode}
+      onHome={returnFromSession}
+      onRestartRealTime={
+        realTimeRestartEnabled ? restartCalibratedAdaptive : undefined
+      }
+    />
+  );
 }

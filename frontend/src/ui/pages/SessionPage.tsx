@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useStore } from 'zustand';
 import { audioEngine } from '../../audio/AudioEngine.js';
 import { runtimeDiagnostics } from '../../debug/index.js';
@@ -17,6 +17,11 @@ import { ActiveSoundscapePanel } from '../components/ActiveSoundscapePanel.js';
 import { AIAdaptationPanel } from '../components/AIAdaptationPanel.js';
 import { JourneyPlanPanel } from '../components/JourneyPlanPanel.js';
 import { NeuroStatePanel } from '../components/NeuroStatePanel.js';
+import {
+  api as calibrationApi,
+  type SavedCalibrationSession,
+} from '../../calibration/services/api.js';
+import type { Profile } from '../../calibration/types.js';
 
 const clock = (milliseconds: number) => {
   const total = Math.floor(milliseconds / 1000);
@@ -27,9 +32,27 @@ const clock = (milliseconds: number) => {
 
 export function SessionPage({
   mode = 'live',
+  onRestartRealTime,
+  onHome,
 }: {
-  mode?: 'live' | 'adaptive' | 'demo' | 'long-demo' | 'diagnostic' | 'replay';
+  mode?:
+    | 'live'
+    | 'adaptive'
+    | 'non-adaptive'
+    | 'demo'
+    | 'long-demo'
+    | 'diagnostic'
+    | 'replay';
+  onRestartRealTime?: (profile: Profile) => Promise<void>;
+  onHome?: () => void;
 }) {
+  const [restartOpen, setRestartOpen] = useState(false);
+  const [savedSessions, setSavedSessions] = useState<SavedCalibrationSession[]>(
+    [],
+  );
+  const [selectedSessionId, setSelectedSessionId] = useState('');
+  const [restartError, setRestartError] = useState('');
+  const [restartBusy, setRestartBusy] = useState(false);
   const session = useStore(runtimeStore, (state) => state.sessionRuntime);
   const connection = useStore(runtimeStore, (state) => state.connectionState);
   const runtime = useStore(runtimeStore, (state) => state.runtimeWorldState);
@@ -61,17 +84,55 @@ export function SessionPage({
     action: runtime?.action.filter((item) => item.active).length ?? 0,
     event: runtime?.event.filter((item) => item.active).length ?? 0,
   };
+  useEffect(() => {
+    if (!restartOpen) return;
+    setRestartError('');
+    void calibrationApi
+      .sessions()
+      .then((sessions) => {
+        const completed = sessions.filter((item) => item.completed_at);
+        setSavedSessions(completed);
+        setSelectedSessionId(
+          (current) => current || completed[0]?.session_id || '',
+        );
+      })
+      .catch((error) =>
+        setRestartError(error instanceof Error ? error.message : String(error)),
+      );
+  }, [restartOpen]);
+  const restartRealTime = async () => {
+    if (!onRestartRealTime || !selectedSessionId) return;
+    setRestartBusy(true);
+    setRestartError('');
+    try {
+      const details = await calibrationApi.session(selectedSessionId);
+      if (!details.profile || details.profile_compatible === false)
+        throw new Error(
+          details.profile_error ||
+            'This session has no compatible calibration profile.',
+        );
+      await onRestartRealTime(details.profile);
+      setRestartOpen(false);
+    } catch (error) {
+      setRestartError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRestartBusy(false);
+    }
+  };
   const demoHarness =
     mode === 'adaptive'
       ? adaptiveIntegrationHarness
-      : mode === 'long-demo'
-        ? longIntegrationHarness
-        : mode === 'diagnostic'
-          ? spatialDiagnosticHarness
-          : integrationHarness;
+      : mode === 'non-adaptive'
+        ? integrationHarness
+        : mode === 'long-demo'
+          ? longIntegrationHarness
+          : mode === 'diagnostic'
+            ? spatialDiagnosticHarness
+            : integrationHarness;
   const pauseResume = () => {
     if (
       mode === 'adaptive' ||
+      mode === 'non-adaptive' ||
       mode === 'demo' ||
       mode === 'long-demo' ||
       mode === 'diagnostic'
@@ -89,6 +150,7 @@ export function SessionPage({
   const end = () => {
     if (
       mode === 'adaptive' ||
+      mode === 'non-adaptive' ||
       mode === 'demo' ||
       mode === 'long-demo' ||
       mode === 'diagnostic'
@@ -97,21 +159,24 @@ export function SessionPage({
     else liveRuntimeClient.sendCommand({ command: 'endSession' });
   };
   const modeLabel =
-    mode === 'live'
-      ? `Live · ${connection.status}${connection.latencyMs === null ? '' : ` · ${connection.latencyMs} ms`}`
-      : mode === 'adaptive'
-        ? 'Phase 1 · adaptive planner + Module 03/04'
-        : mode === 'demo'
-          ? 'Demo / Integration · Module 03 active'
-          : mode === 'long-demo'
-            ? 'Long validation · Module 03 active'
-            : mode === 'diagnostic'
-              ? 'Spatial diagnostic · Module 03 active'
-              : 'Replay · recorded session';
+    mode === 'non-adaptive'
+      ? '10 min · approved fixed trajectory · EEG/LLM disabled'
+      : mode === 'live'
+        ? `Live · ${connection.status}${connection.latencyMs === null ? '' : ` · ${connection.latencyMs} ms`}`
+        : mode === 'adaptive'
+          ? 'Phase 1 · adaptive planner + Module 03/04'
+          : mode === 'demo'
+            ? 'Demo / Integration · Module 03 active'
+            : mode === 'long-demo'
+              ? 'Long validation · Module 03 active'
+              : mode === 'diagnostic'
+                ? 'Spatial diagnostic · Module 03 active'
+                : 'Replay · recorded session';
   return (
     <main className="session-shell">
       <header>
         <p className="flow-brand">NeuroScape</p>
+        {onHome && <button onClick={onHome}>Return Home</button>}
         <div
           className={`connection-badge connection-badge--${mode === 'live' ? connection.status : mode}`}
         >
@@ -137,8 +202,17 @@ export function SessionPage({
           </p>
         </section>
         <aside>
-          <NeuroStatePanel />
-          <AIAdaptationPanel />
+          {mode === 'non-adaptive' ? (
+            <div className="glass-panel">
+              <h3>Non-Adaptive Control</h3>
+              <p>No EEG is read and no LLM is called during this session.</p>
+            </div>
+          ) : (
+            <>
+              <NeuroStatePanel />
+              <AIAdaptationPanel />
+            </>
+          )}
         </aside>
       </div>
       <footer className="session-footer">
@@ -171,8 +245,44 @@ export function SessionPage({
               ? 'Resume'
               : 'Pause'}
           </button>
+          {onRestartRealTime && (
+            <button onClick={() => setRestartOpen((open) => !open)}>
+              Restart Real-Time
+            </button>
+          )}
           <button onClick={end}>End</button>
         </div>
+        {restartOpen && (
+          <section
+            className="realtime-restart-panel"
+            aria-label="Restart real-time session"
+          >
+            <label>
+              Calibration session
+              <select
+                value={selectedSessionId}
+                onChange={(event) => setSelectedSessionId(event.target.value)}
+                disabled={restartBusy}
+              >
+                {!savedSessions.length && (
+                  <option value="">No completed profiles found</option>
+                )}
+                {savedSessions.map((item) => (
+                  <option value={item.session_id} key={item.session_id}>
+                    {item.participant_id} · {item.session_id}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              onClick={() => void restartRealTime()}
+              disabled={!selectedSessionId || restartBusy}
+            >
+              {restartBusy ? 'Restarting…' : 'Restart with Selected Profile'}
+            </button>
+            {restartError && <p role="alert">{restartError}</p>}
+          </section>
+        )}
         <details className="developer-controls">
           <summary>Runtime diagnostics</summary>
           <div className="diagnostic-grid">

@@ -11,7 +11,7 @@ import type {
   SoundscapePlanPatch,
 } from './types.js';
 
-export const DECISION_1_PROMPT_VERSION = 'decision-1-attention-policy-v1';
+export const DECISION_1_PROMPT_VERSION = 'decision-1-attention-policy-v2';
 
 const goals: readonly AdaptationGoal[] = [
   'maintain',
@@ -48,7 +48,13 @@ export function buildDecision1Prompt(context: DecisionContext): string {
     'Decide whether the current soundscape should be adapted at this eligible checkpoint.',
     'The deterministic eligibility gate has already approved an LLM assessment. Eligibility does not itself mean an adaptation is necessary.',
     'Use the calibration-relative attention state, trend, confidence, session phase, current soundscape, recent adaptation history, and restrictions.',
-    'Prefer maintain when evidence is ambiguous, transient, already improving, or a recent intervention has not had enough time to take effect.',
+    'Use the following active adaptation policy while respecting restrictions and recent intervention history.',
+    'For focus-leaning attention that is stable or improving, prefer maintain.',
+    'For intermediate attention that is stable, a low-cost within-scene gently-reorient event may be appropriate when no recent intervention is awaiting effect.',
+    'For intermediate attention trending toward mind-wandering, normally adapt with a gently-reorient within-scene intervention unless a restriction or recent intervention specifically argues against it.',
+    'For high-confidence mind-wandering-leaning attention, normally adapt. Prefer gently-reorient for a new or brief deviation and support-grounding when the deviation is sustained across checkpoints.',
+    'Escalate to refresh-engagement or a scene transition only after lighter interventions have not produced a durable improvement.',
+    'Prefer maintain only when evidence is transient, already improving, low-confidence, or a recent intervention has not had enough time to take effect; do not maintain merely because the state is intermediate.',
     'Use within-scene adaptation before scene transition. Scene transition is a rare, high-salience intervention for sustained, severe mind-wandering after lighter interventions were insufficient, and only when restrictions allow it.',
     'Opening and closing phase restrictions are authoritative. Never request a forbidden event, body anchor, or scene transition.',
     'If shouldAdapt is false, return goal=maintain and scope=maintain. If shouldAdapt is true, neither goal nor scope may be maintain.',

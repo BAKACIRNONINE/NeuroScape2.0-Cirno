@@ -248,7 +248,25 @@ export class AdaptiveIntegrationHarness {
           epoch.timestampMs,
           this.toProtocolNeuroState(state),
         );
-        if (result) this.handleCheckpoint(result);
+        if (result) {
+          try {
+            this.handleCheckpoint(result);
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            this.trace(
+              result.state.timestampMs,
+              'plan-error',
+              'deterministic',
+              `Plan application failed: ${message}`,
+              { message, planId: result.plan?.planId },
+            );
+            this.dispatch('PlannerStatus', result.state.timestampMs, {
+              status: 'error',
+              message: `Plan rejected; maintaining the current soundscape. ${message}`,
+            });
+          }
+        }
       }
       const startedAt = performance.now();
       const snapshot = this.#runtime.update(

@@ -10,7 +10,11 @@ import {
 } from 'recharts';
 import './calibration.css';
 import { useLive } from './hooks/useLive';
-import { api, type SelfReportPayload } from './services/api';
+import {
+  api,
+  type SavedCalibrationSession,
+  type SelfReportPayload,
+} from './services/api';
 import type {
   CalibrationBlock,
   Condition,
@@ -32,7 +36,12 @@ const timer = (value = 0) => {
 
 const guidance: Record<
   'acclimation' | Condition,
-  { title: string; chinese: string[]; english: string[] }
+  {
+    title: string;
+    chinese: string[];
+    english: string[];
+    repeat?: { chinese: string[]; english: string[] };
+  }
 > = {
   acclimation: {
     title: 'Acclimation｜适应阶段',
@@ -48,28 +57,46 @@ const guidance: Record<
   focused_meditation: {
     title: 'Focused Meditation｜专注冥想',
     chinese: [
-      '接下来，请尝试将注意力轻轻放在当下的体验中。你可以选择关注呼吸、身体感觉，或者当前能够感受到的整体环境。',
-      '如果你选择呼吸，可以注意鼻尖、胸部或腹部在吸气和呼气时产生的感觉。',
+      '接下来，请尝试将注意力集中在你的呼吸和自己的身体上。',
+      '如果你不知道怎么做，可以试着慢慢感受自己的吸气和呼气，并数一数每次呼吸。',
       '请保持闭眼和身体静止。准备好后请告诉我，我会开始记录。',
     ],
     english: [
-      'Next, please gently direct your attention to your present-moment experience. You may choose to focus on your breathing, bodily sensations, or the overall environment you can currently perceive.',
-      'If you choose the breath, you may notice the sensations at the tip of your nose, in your chest, or in your abdomen as you inhale and exhale.',
-      'Please keep your eyes closed and your body still. When you are ready, let me know and I will begin recording.',
+      'Now, try focusing your attention on your breathing and the sensations in your body.',
+      'If you’re not sure how to start, try counting your breaths.',
+      'Please keep your eyes closed and your head still. Let me know when you’re ready, and I’ll begin recording.',
     ],
+    repeat: {
+      chinese: [
+        '接下来是另一个呼吸专注练习。请继续闭眼并保持头部不动，准备好后告诉我。',
+      ],
+      english: [
+        'Next is another breath-focus block. Please keep your eyes closed and your head still, and let me know when you’re ready.',
+      ],
+    },
   },
   free_thought: {
     title: 'Free Thought｜自由思绪',
     chinese: [
-      '在接下来的阶段，你可以放松对注意力的控制，让思绪自然移动到与当前冥想体验无关的内容。',
-      '这些想法可以与过去的经历、未来的计划、想象中的场景或其他自然出现的内容有关。你不需要刻意选择或持续思考某一个主题；当一个想法淡去时，可以允许其他想法自然出现。',
+      '接下来，请放松对注意力的控制，让思绪自然地流动。',
+      '你不需要刻意选择或一直思考某一个主题。一个想法淡去时，就让其他想法自然出现。',
+      '如果你不知道怎么开始，可以想一想即将到来的新学期：你有什么规划和期待？',
       '请继续保持闭眼和身体静止。准备好后请告诉我，我会开始记录。',
     ],
     english: [
-      'In the next phase, you may relax your control over attention and allow your thoughts to move naturally toward content unrelated to your current meditation experience.',
-      'These thoughts may concern past experiences, future plans, imagined scenes, or anything else that arises naturally. You do not need to deliberately choose or continue thinking about any one topic. When one thought fades, simply allow another thought to arise naturally.',
-      'Please continue to keep your eyes closed and your body still. When you are ready, let me know and I will begin recording.',
+      'Next, try not to control your attention. Just let your thoughts flow naturally.',
+      'You don’t need to choose a topic or keep thinking about the same thing. When one thought fades, simply let another arise.',
+      'If you’re not sure how to begin, think about the upcoming semester. What plans or expectations do you have?',
+      'Again, please keep your eyes closed and your head still. Let me know when you’re ready, and I’ll begin recording.',
     ],
+    repeat: {
+      chinese: [
+        '接下来是另一个自由思绪练习。请继续闭眼并保持头部不动，准备好后告诉我。',
+      ],
+      english: [
+        'Next is another free-thought block. Please keep your eyes closed and your head still, and let me know when you’re ready.',
+      ],
+    },
   },
 };
 
@@ -90,12 +117,102 @@ function Metric({
   );
 }
 
+function SavedProfileLauncher({
+  onContinue,
+}: {
+  onContinue: (profile: Profile) => void | Promise<void>;
+}) {
+  const [sessions, setSessions] = useState<SavedCalibrationSession[]>([]);
+  const [sessionId, setSessionId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [starting, setStarting] = useState(false);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    void api
+      .sessions()
+      .then((items) => {
+        const completed = items.filter((item) => item.completed_at);
+        setSessions(completed);
+        setSessionId(completed[0]?.session_id ?? '');
+      })
+      .catch((reason) =>
+        setLoadError(reason instanceof Error ? reason.message : String(reason)),
+      )
+      .finally(() => setLoading(false));
+  }, []);
+
+  const start = async () => {
+    if (!sessionId) return;
+    setStarting(true);
+    setLoadError('');
+    try {
+      const details = await api.session(sessionId);
+      if (!details.profile || details.profile_compatible === false)
+        throw new Error(
+          details.profile_error ||
+            'This session has no compatible calibration profile.',
+        );
+      if (!details.profile.ready_to_continue)
+        throw new Error(
+          'This calibration profile is not ready for a real-time session.',
+        );
+      await onContinue(details.profile);
+    } catch (reason) {
+      setLoadError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  return (
+    <section className="panel saved-profile-launcher">
+      <div>
+        <p className="eyebrow">EXISTING CALIBRATION</p>
+        <h2>Run real-time again</h2>
+        <p>Select a saved profile from data/sessions and skip calibration.</p>
+      </div>
+      <div className="saved-profile-controls">
+        <select
+          aria-label="Saved calibration profile"
+          value={sessionId}
+          onChange={(event) => setSessionId(event.target.value)}
+          disabled={loading || starting}
+        >
+          {!sessions.length && (
+            <option value="">
+              {loading
+                ? 'Loading saved profiles…'
+                : 'No completed profiles found'}
+            </option>
+          )}
+          {sessions.map((item) => (
+            <option value={item.session_id} key={item.session_id}>
+              {item.participant_id} · {item.session_id}
+            </option>
+          ))}
+        </select>
+        <button disabled={!sessionId || starting} onClick={() => void start()}>
+          {starting ? 'Starting…' : 'Enter Real-Time with Saved Profile'}
+        </button>
+      </div>
+      {loadError && (
+        <p className="saved-profile-error" role="alert">
+          {loadError}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function Shell({
   children,
   status,
+  onHome,
 }: {
   children: React.ReactNode;
   status: Status | null;
+  onHome?: () => void;
 }) {
   return (
     <div className="calibration-root app-shell">
@@ -105,6 +222,7 @@ function Shell({
           <p className="eyebrow">LOCAL INVESTIGATOR TOOL</p>
           <h1>NeuroScape Calibration</h1>
         </div>
+        {onHome && <button onClick={onHome}>Return Home</button>}
         <div
           className={`connection-pill ${status?.connection.connected ? 'online' : ''}`}
         >
@@ -411,8 +529,15 @@ function ConnectionPage({
   );
 }
 
-function GuidancePanel({ kind }: { kind: 'acclimation' | Condition }) {
+function GuidancePanel({
+  kind,
+  repeated = false,
+}: {
+  kind: 'acclimation' | Condition;
+  repeated?: boolean;
+}) {
   const item = guidance[kind];
+  const script = repeated && item.repeat ? item.repeat : item;
   return (
     <section className="panel guidance-panel">
       <div className="section-heading">
@@ -424,13 +549,13 @@ function GuidancePanel({ kind }: { kind: 'acclimation' | Condition }) {
       <div className="guidance-columns">
         <div lang="zh">
           <h3>中文</h3>
-          {item.chinese.map((text) => (
+          {script.chinese.map((text) => (
             <p key={text}>“{text}”</p>
           ))}
         </div>
         <div lang="en">
           <h3>English</h3>
-          {item.english.map((text) => (
+          {script.english.map((text) => (
             <p key={text}>“{text}”</p>
           ))}
         </div>
@@ -681,6 +806,11 @@ function ProtocolPage({ status }: { status: Status }) {
   ].includes(status.state)
     ? 'acclimation'
     : current?.condition || next?.condition || 'acclimation';
+  const repeatedGuidance =
+    guidanceKind !== 'acclimation' &&
+    status.protocol.completed_blocks.some(
+      (block) => block.condition === guidanceKind,
+    );
   const recording = ['ACCLIMATION', 'BLOCK_RECORDING'].includes(status.state);
   const endEarly = () => {
     if (
@@ -713,7 +843,9 @@ function ProtocolPage({ status }: { status: Status }) {
         </div>
       )}
       <ProtocolProgress status={status} />
-      {status.state !== 'SELF_REPORT' && <GuidancePanel kind={guidanceKind} />}
+      {status.state !== 'SELF_REPORT' && (
+        <GuidancePanel kind={guidanceKind} repeated={repeatedGuidance} />
+      )}
       <section className="panel investigator-panel">
         <div className="state-row">
           <div>
@@ -800,7 +932,8 @@ function ProtocolPage({ status }: { status: Status }) {
           <>
             <div className="phase-instruction">
               Next: {next.condition_label} {next.condition_block_number}
-              {next.is_redo ? ' (redo)' : ''}. Read the full guidance and wait
+              {next.is_redo ? ' (redo)' : ''}. Read the{' '}
+              {repeatedGuidance ? 'brief reminder' : 'full guidance'} and wait
               for the participant to say they are ready.
             </div>
             <div className="control-row">
@@ -1039,7 +1172,7 @@ function ResultsPage({
 }: {
   profile: Profile;
   onNew: () => void;
-  onContinue: (profile: Profile) => void;
+  onContinue: (profile: Profile) => void | Promise<void>;
 }) {
   const focused = profile.quality.condition_summary.focused_meditation;
   const free = profile.quality.condition_summary.free_thought;
@@ -1068,20 +1201,32 @@ function ResultsPage({
       </section>
       <section
         className={`quality-banner ${profile.ready_to_continue ? 'valid' : 'invalid'}`}
+        role="status"
+        aria-live="polite"
       >
         <div>
           <span>
             {profile.ready_to_continue
-              ? 'COLLECTION COMPLETE'
+              ? 'CALIBRATION COMPLETE'
               : 'COLLECTION INSUFFICIENT'}
           </span>
           <strong>
             {profile.ready_to_continue
-              ? 'Ready to continue'
+              ? 'Calibration profile created successfully'
               : 'Do not continue'}
           </strong>
         </div>
-        <p>{profile.mapping_explanation}</p>
+        <div className="quality-banner-detail">
+          <p>{profile.mapping_explanation}</p>
+          {profile.ready_to_continue && (
+            <button
+              className="adaptive-system-button"
+              onClick={() => onContinue(profile)}
+            >
+              Return Home
+            </button>
+          )}
+        </div>
       </section>
       <section className="panel quality-report">
         <div className="section-heading">
@@ -1230,11 +1375,6 @@ function ResultsPage({
         objective attention measurements.
       </div>
       <div className="actions wide">
-        {profile.ready_to_continue && (
-          <button onClick={() => onContinue(profile)}>
-            Continue to Adaptive Session
-          </button>
-        )}
         <a
           className="button secondary"
           href={`${base}/files/calibration_profile.json`}
@@ -1266,9 +1406,11 @@ function ResultsPage({
 
 export function CalibrationPage({
   onContinue,
+  onHome,
   initialParticipantId = '',
 }: {
-  onContinue: (profile: Profile) => void;
+  onContinue: (profile: Profile) => void | Promise<void>;
+  onHome?: () => void;
   initialParticipantId?: string;
 }) {
   const [initial, setInitial] = useState<Status | null>(null);
@@ -1291,7 +1433,7 @@ export function CalibrationPage({
   }, [status?.state]);
   if (error && !status)
     return (
-      <Shell status={status}>
+      <Shell status={status} onHome={onHome}>
         <div className="fatal">
           <h2>Application unavailable</h2>
           <p>{error}</p>
@@ -1300,7 +1442,7 @@ export function CalibrationPage({
     );
   if (!status)
     return (
-      <Shell status={null}>
+      <Shell status={null} onHome={onHome}>
         <div className="loading">Opening local receiver…</div>
       </Shell>
     );
@@ -1342,7 +1484,7 @@ export function CalibrationPage({
       />
     );
   return (
-    <Shell status={status}>
+    <Shell status={status} onHome={onHome}>
       {error && <div className="alert error global-error">{error}</div>}
       {page}
     </Shell>
