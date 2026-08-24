@@ -24,14 +24,14 @@ export const initialForestPlan: SceneJourneyPlan = {
     ambient: [
       {
         id: 'forest-bed',
-        assetId: 'ambient.forest.light',
+        assetId: 'forest_ambient_bed_01',
         mode: 'global',
         gain: 0.38,
         active: true,
       },
       {
         id: 'forest-wind',
-        assetId: 'ambient.forest.wind',
+        assetId: 'forest_wind_leaves_01',
         mode: 'localized',
         locationId: 'clearing',
         gain: 0.18,

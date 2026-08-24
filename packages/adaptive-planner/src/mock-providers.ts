@@ -3,10 +3,11 @@ import type {
   AmbientPlanItem,
   EventPlanItem,
 } from '@neuroscape/contracts';
-import type { AdaptivePlannerConfig } from './config.js';
+import { audioLibrary } from '@neuroscape/contracts';
 import type {
   AdaptationDecision,
   DecisionContext,
+  Decision2Input,
   DecisionProvider,
   PlanningProvider,
   PlanningResult,
@@ -15,58 +16,66 @@ import type {
 export interface SoundAssetKnowledge {
   assetId: string;
   family: string;
+  label: string;
   layer: 'ambient' | 'event' | 'body-anchor';
   description: string;
-  durationMs?: number;
+  scenes: string[];
+  tags: string[];
+  loop: boolean;
+  intensity: number;
+  suddenness: number;
+  recommendedDistance: string;
+  useWhen: string[];
+  avoidWhen: string[];
+  spatialBehavior: string[];
+  defaultPosition: [number, number, number];
+  defaultMotionType: string;
+  motionDurationMs: number | null;
+  autoDeleteAfterMs: number | null;
+  recommendedVolume: number;
+  fadeInMs: number;
+  fadeOutMs: number;
+  priority: number;
+  isPrimaryAmbient: boolean;
+  isRareEvent: boolean;
 }
 
 export const phase1SoundKnowledge: readonly SoundAssetKnowledge[] =
-  Object.freeze([
-    {
-      assetId: 'ambient.forest.light',
-      family: 'forest-bed',
-      layer: 'ambient',
-      description: 'Quiet continuous forest bed.',
-    },
-    {
-      assetId: 'ambient.forest.wind',
-      family: 'forest-wind',
-      layer: 'ambient',
-      description: 'Localized wind through leaves.',
-    },
-    {
-      assetId: 'ambient.stream.near',
-      family: 'water',
-      layer: 'ambient',
-      description: 'Nearby flowing water.',
-    },
-    {
-      assetId: 'ambient.waterfall',
-      family: 'water',
-      layer: 'ambient',
-      description: 'Broad waterfall ambience.',
-    },
-    {
-      assetId: 'event.bird-pass',
-      family: 'bird',
-      layer: 'event',
-      description: 'One sparse directional bird pass.',
-      durationMs: 6_000,
-    },
-    {
-      assetId: 'event.leaves',
-      family: 'leaves',
-      layer: 'event',
-      description: 'Short localized leaf movement.',
-      durationMs: 5_000,
-    },
-    {
-      assetId: 'action.guided-breath',
-      family: 'breath',
-      layer: 'body-anchor',
-      description: 'Near-chest paced breathing anchor.',
-    },
-  ]);
+  Object.freeze(
+    audioLibrary.map((asset) => ({
+      assetId: asset.asset_id,
+      family: asset.asset_id.replace(/_\d+$/, ''),
+      label: asset.label,
+      layer: (asset.layer === 'action' ? 'body-anchor' : asset.layer) as
+        'ambient' | 'event' | 'body-anchor',
+      description: asset.description,
+      scenes: [...asset.scene],
+      tags: [...asset.tags],
+      loop: asset.loop,
+      intensity: asset.intensity,
+      suddenness: asset.suddenness,
+      recommendedDistance: asset.recommended_distance,
+      useWhen: [...asset.use_when],
+      avoidWhen: [...asset.avoid_when],
+      spatialBehavior: [...asset.spatial_behavior],
+      defaultPosition: [...asset.default_position] as [number, number, number],
+      defaultMotionType: asset.default_motion.type,
+      motionDurationMs:
+        asset.default_motion.duration === undefined
+          ? null
+          : asset.default_motion.duration * 1_000,
+      autoDeleteAfterMs:
+        asset.auto_delete_after_sec === null
+          ? null
+          : asset.auto_delete_after_sec * 1_000,
+      recommendedVolume: asset.recommended_volume,
+      fadeInMs: asset.fade_in_sec * 1_000,
+      fadeOutMs: asset.fade_out_sec * 1_000,
+      priority: asset.priority,
+      isPrimaryAmbient: asset.is_primary_ambient,
+      isRareEvent: asset.is_rare_event,
+    })),
+  );
 
 export class MockDecisionProvider implements DecisionProvider {
   async decide(context: DecisionContext): Promise<AdaptationDecision> {
@@ -126,11 +135,10 @@ export class MockDecisionProvider implements DecisionProvider {
 }
 
 export class MockPlanningProvider implements PlanningProvider {
-  constructor(private readonly config: AdaptivePlannerConfig) {}
-
   async plan(
     context: DecisionContext,
     decision: AdaptationDecision,
+    input: Decision2Input,
   ): Promise<PlanningResult> {
     if (!decision.shouldAdapt)
       throw new Error(
@@ -147,24 +155,22 @@ export class MockPlanningProvider implements PlanningProvider {
           : current === 'stream_bank'
             ? 'waterfall'
             : 'stream_bank';
-      const ambient: AmbientPlanItem =
-        destination === 'waterfall'
-          ? {
-              id: 'water-anchor',
-              assetId: 'ambient.waterfall',
-              mode: 'localized',
-              locationId: 'waterfall',
-              gain: 0.5,
-              active: true,
-            }
-          : {
-              id: 'water-anchor',
-              assetId: 'ambient.stream.near',
-              mode: 'localized',
-              locationId: 'stream_bank',
-              gain: 0.42,
-              active: true,
-            };
+      const candidate = input.candidates.find(
+        (item) => item.layer === 'ambient',
+      );
+      if (!candidate)
+        throw new Error(
+          'No scene-compatible ambient candidate is available for Decision 2.',
+        );
+      const localized = !candidate.spatialBehavior.includes('wide');
+      const ambient: AmbientPlanItem = {
+        id: 'scene-ambient',
+        assetId: candidate.assetId,
+        mode: localized ? 'localized' : 'global',
+        ...(localized ? { locationId: destination } : {}),
+        gain: candidate.recommendedVolume,
+        active: true,
+      };
       return {
         patch: {
           reasoningSummary: decision.rationale,
@@ -173,20 +179,34 @@ export class MockPlanningProvider implements PlanningProvider {
             waypoints: [{ locationId: current }, { locationId: destination }],
           },
           upsertAmbient: [ambient],
+          removeIds: context.currentPlan.soundscape.ambient
+            .filter((item) => item.mode === 'global')
+            .map((item) => item.id),
           transitionDurationMs: 8_000,
         },
         selectedAssetIds: [ambient.assetId],
-        rationale: `Water ambience and a connected semantic journey realize the ${destination} transition.`,
+        candidateAssetIds: input.candidates.map((item) => item.assetId),
+        promptVersion: input.promptVersion,
+        prompt: input.prompt,
+        outputSchema: input.outputSchema,
+        rationale: `${candidate.label} is the highest-ranked scene-compatible ambient candidate. The authored library currently lacks dedicated forest stream/waterfall recordings, so the prototype preserves the forest sound family while testing the journey transition.`,
         provider: 'mock-planner-v1',
       };
     }
     if (decision.goal === 'support-grounding') {
+      const candidate =
+        input.candidates.find((item) => item.tags.includes('breath')) ??
+        input.candidates.find((item) => item.layer === 'action');
+      if (!candidate)
+        throw new Error(
+          'No body-anchor candidate is available for Decision 2.',
+        );
       const action: ActionPlanItem = {
         id: 'breathing',
-        assetId: 'action.guided-breath',
+        assetId: candidate.assetId,
         attachment: 'chest',
-        relativePosition: [0, -0.25, -0.12],
-        gain: 0.28,
+        relativePosition: [...candidate.defaultPosition],
+        gain: candidate.recommendedVolume,
         active: true,
       };
       return {
@@ -196,51 +216,45 @@ export class MockPlanningProvider implements PlanningProvider {
           transitionDurationMs: 3_000,
         },
         selectedAssetIds: [action.assetId],
-        rationale:
-          'A listener-relative breath cue provides grounding without implying listener movement.',
+        candidateAssetIds: input.candidates.map((item) => item.assetId),
+        promptVersion: input.promptVersion,
+        prompt: input.prompt,
+        outputSchema: input.outputSchema,
+        rationale: `${candidate.label} is authored for grounding and body-anchored near-field presentation without listener movement.`,
         provider: 'mock-planner-v1',
       };
     }
-    const recentAssets = new Set(
-      context.history
-        .filter(
-          (item) => now - item.timestampMs < this.config.exactAssetCooldownMs,
-        )
-        .flatMap((item) => item.assetIds),
-    );
-    const assetFamily = new Map(
-      phase1SoundKnowledge.map((asset) => [asset.assetId, asset.family]),
-    );
-    const recentFamilies = new Set(
-      context.history
-        .filter(
-          (item) => now - item.timestampMs < this.config.assetFamilyCooldownMs,
-        )
-        .flatMap((item) =>
-          item.assetIds.map((assetId) => assetFamily.get(assetId)),
-        )
-        .filter((family): family is string => family !== undefined),
-    );
-    const assetId = ['event.bird-pass', 'event.leaves'].find(
-      (candidate) =>
-        !recentAssets.has(candidate) &&
-        !recentFamilies.has(assetFamily.get(candidate)!),
-    );
-    if (!assetId) {
+    const candidate = input.candidates.find((item) => item.layer === 'event');
+    if (!candidate) {
       throw new Error(
-        'No event asset satisfies the exact-asset and asset-family cooldowns.',
+        'No event asset satisfies library compatibility and cooldown filtering.',
       );
     }
+    const assetId = candidate.assetId;
+    const durationMs = Math.round(
+      (candidate.defaultMotion.durationSec ??
+        candidate.autoDeleteAfterSec ??
+        6) * 1_000,
+    );
+    const currentLocation =
+      context.currentPlan.userJourney.waypoints.at(-1)?.locationId ??
+      'clearing';
+    const moving = candidate.defaultMotion.type !== 'none';
     const event: EventPlanItem = {
       id: `event-${now}`,
       assetId,
       activationTimeMs: now + 2_000,
-      durationMs: assetId === 'event.bird-pass' ? 6_000 : 5_000,
-      trajectory: [
-        { locationId: 'forest_entry', timestampMs: now + 2_000 },
-        { locationId: 'clearing', timestampMs: now + 8_000 },
-      ],
-      gain: 0.3,
+      durationMs,
+      trajectory: moving
+        ? [
+            { locationId: 'forest_entry', timestampMs: now + 2_000 },
+            {
+              locationId: currentLocation,
+              timestampMs: now + 2_000 + durationMs,
+            },
+          ]
+        : [{ locationId: currentLocation, timestampMs: now + 2_000 }],
+      gain: candidate.recommendedVolume,
     };
     return {
       patch: {
@@ -249,8 +263,11 @@ export class MockPlanningProvider implements PlanningProvider {
         transitionDurationMs: 2_000,
       },
       selectedAssetIds: [assetId],
-      rationale:
-        'A single low-gain moving event gently reorients attention while the listener and scene remain unchanged.',
+      candidateAssetIds: input.candidates.map((item) => item.assetId),
+      promptVersion: input.promptVersion,
+      prompt: input.prompt,
+      outputSchema: input.outputSchema,
+      rationale: `${candidate.label} is a compatible low-intensity event. Its ${durationMs / 1_000}-second timing and ${candidate.defaultMotion.type} behavior come directly from the audio library.`,
       provider: 'mock-planner-v1',
     };
   }

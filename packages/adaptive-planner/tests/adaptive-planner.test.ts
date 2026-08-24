@@ -15,7 +15,7 @@ const engine = () =>
     profile: mockCalibrationProfile,
     initialPlan: initialForestPlan,
     decisionProvider: new MockDecisionProvider(),
-    planningProvider: new MockPlanningProvider(phase1Config),
+    planningProvider: new MockPlanningProvider(),
   });
 
 describe('adaptive planner Phase 1', () => {
@@ -36,7 +36,7 @@ describe('adaptive planner Phase 1', () => {
     expect(
       checkpoints.some((item) =>
         item.plan?.soundscape.action.some(
-          (sound) => sound.assetId === 'action.guided-breath',
+          (sound) => sound.assetId === 'body_slow_breath_01',
         ),
       ),
     ).toBe(true);

@@ -104,8 +104,52 @@ export interface SoundscapePlanPatch {
 export interface PlanningResult {
   patch: SoundscapePlanPatch;
   selectedAssetIds: string[];
+  candidateAssetIds: string[];
+  promptVersion: string;
+  prompt: string;
+  outputSchema: Record<string, unknown>;
   rationale: string;
   provider: string;
+}
+
+export interface Decision2Candidate {
+  assetId: string;
+  familyId: string;
+  label: string;
+  description: string;
+  scene: string[];
+  layer: 'ambient' | 'event' | 'action';
+  tags: string[];
+  loop: boolean;
+  suddenness: number;
+  intensity: number;
+  recommendedDistance: string;
+  recommendedVolume: number;
+  useWhen: string[];
+  avoidWhen: string[];
+  spatialBehavior: string[];
+  defaultPosition: [number, number, number];
+  defaultMotion: {
+    type: string;
+    durationSec: number | null;
+    start?: [number, number, number];
+    mid?: [number, number, number];
+    end?: [number, number, number];
+  };
+  autoDeleteAfterSec: number | null;
+  fadeInSec: number;
+  fadeOutSec: number;
+  priority: number;
+  isPrimaryAmbient: boolean;
+  isRareEvent: boolean;
+}
+
+export interface Decision2Input {
+  promptVersion: string;
+  prompt: string;
+  outputSchema: Record<string, unknown>;
+  currentScene: string;
+  candidates: Decision2Candidate[];
 }
 
 export interface DecisionProvider {
@@ -116,6 +160,7 @@ export interface PlanningProvider {
   plan(
     context: DecisionContext,
     decision: AdaptationDecision,
+    input: Decision2Input,
   ): Promise<PlanningResult>;
 }
 

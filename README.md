@@ -2,6 +2,8 @@
 
 Module 01/02 Phase 1 development and test instructions: [docs/MODULE_01_02_PHASE1.md](docs/MODULE_01_02_PHASE1.md).
 
+Audio-library items intentionally deferred for later asset curation are tracked in [docs/TBD_AUDIO_LIBRARY_GAPS.md](docs/TBD_AUDIO_LIBRARY_GAPS.md).
+
 NeuroScape is a neuroadaptive spatial-audio meditation runtime. Modules 03 and 04 are implemented: semantic plans become authoritative numerical world snapshots in Module 03, then Module 04 validates, visualizes, spatializes, records, and replays those snapshots in the browser.
 
 ```text

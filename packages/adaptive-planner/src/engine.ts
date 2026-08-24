@@ -1,5 +1,9 @@
 import type { SceneJourneyPlan } from '@neuroscape/contracts';
 import type { AdaptivePlannerConfig } from './config.js';
+import {
+  prepareDecision2Input,
+  validateDecision2Selection,
+} from './audio-retrieval.js';
 import { evaluateEligibility, restrictionsFor } from './gate.js';
 import { AttentionInterpreter } from './interpreter.js';
 import { mergePlanPatch } from './plan-merge.js';
@@ -64,7 +68,17 @@ export class AdaptivePlannerEngine {
     const decision = await this.#decisionProvider.decide(context);
     result.decision = decision;
     if (!decision.shouldAdapt) return result;
-    const planning = await this.#planningProvider.plan(context, decision);
+    const decision2Input = prepareDecision2Input(
+      context,
+      decision,
+      this.#config,
+    );
+    const planning = await this.#planningProvider.plan(
+      context,
+      decision,
+      decision2Input,
+    );
+    validateDecision2Selection(planning, decision2Input);
     const plan = mergePlanPatch(
       this.#currentPlan,
       planning.patch,

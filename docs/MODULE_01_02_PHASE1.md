@@ -55,6 +55,12 @@ The Summary page also offers **Download Study ZIP**. This is an independent fall
 
 Decision 2 is never called when Decision 1 returns maintain.
 
+## Canonical audio library
+
+`packages/contracts/src/audio_library.json` is the shared authored source of truth. Module 04 derives canonical `asset_id → /audio/<asset_ref>` loading entries from it, while Decision 2 receives deterministically retrieved, scene-compatible candidates containing the authored descriptions, tags, intensity, suddenness, recommended volume/distance, use/avoid conditions, spatial behavior, default position, `default_motion.duration`, event lifecycle, fades, loop status, and priority.
+
+The Decision 2 prompt forbids invented assets and numbers. The engine rejects any selected asset ID that was not in the retrieved candidate set. Existing dotted asset IDs remain temporary aliases only for older Module 03/04 demonstrations.
+
 ## Replacement seams for later phases
 
 | Phase 1 component        | Later replacement               | Stable interface       |

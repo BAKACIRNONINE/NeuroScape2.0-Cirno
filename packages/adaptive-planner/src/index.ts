@@ -1,4 +1,5 @@
 export * from './config.js';
+export * from './audio-retrieval.js';
 export * from './engine.js';
 export * from './fixtures.js';
 export * from './gate.js';

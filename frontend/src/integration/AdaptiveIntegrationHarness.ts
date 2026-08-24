@@ -101,7 +101,7 @@ export class AdaptiveIntegrationHarness {
       profile: mockCalibrationProfile,
       initialPlan: initialForestPlan,
       decisionProvider: new MockDecisionProvider(),
-      planningProvider: new MockPlanningProvider(phase1Config),
+      planningProvider: new MockPlanningProvider(),
     });
     this.#runtime.initialize(initialForestPlan);
     this.#epochIndex = 0;

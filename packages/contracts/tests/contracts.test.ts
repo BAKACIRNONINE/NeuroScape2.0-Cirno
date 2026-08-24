@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { audioLibrary } from '../src/index.js';
 import type { NeuroState, RuntimeWorldState } from '../src/index.js';
 
 describe('shared contracts', () => {
@@ -23,5 +24,22 @@ describe('shared contracts', () => {
 
     expect(neuroState.arousal.value).toBe(0.4);
     expect(runtimeState.listener.worldPosition).toEqual([0, 0, 0]);
+  });
+
+  it('loads the canonical authored audio library including motion durations', () => {
+    expect(audioLibrary).toHaveLength(16);
+    expect(
+      audioLibrary.find((asset) => asset.asset_id === 'forest_bird_far_01')
+        ?.default_motion.duration,
+    ).toBe(6);
+    expect(
+      audioLibrary.find((asset) => asset.asset_id === 'forest_wind_leaves_01')
+        ?.default_motion.duration,
+    ).toBe(16);
+    expect(
+      audioLibrary.find(
+        (asset) => asset.asset_id === 'forest_leaf_rustle_mid_01',
+      )?.auto_delete_after_sec,
+    ).toBe(7);
   });
 });
