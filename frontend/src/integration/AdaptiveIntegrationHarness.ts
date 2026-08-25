@@ -5,8 +5,8 @@ import {
   OpenAIDecisionProvider,
   OpenAIPlanningProvider,
   createMockTbrReplay,
-  createMatchedForestBasePlans,
-  assignMatchedBasePlans,
+  createForestBasePlan,
+  assignSharedBasePlan,
   materializeBasePlan,
   mockCalibrationProfile,
   phase1Config,
@@ -120,14 +120,8 @@ export class AdaptiveIntegrationHarness {
     this.#store.getState().resetSessionStreams();
     runtimeDiagnostics.reset();
     this.#runtime = this.createRuntime();
-    const assignment = assignMatchedBasePlans(options.participantId ?? 'P001');
-    const assignedPlanId =
-      this.#condition === 'adaptive'
-        ? assignment.adaptiveBasePlanId
-        : assignment.nonAdaptiveBasePlanId;
-    const basePlan = createMatchedForestBasePlans(phase1Config).find(
-      (plan) => plan.planId === assignedPlanId,
-    )!;
+    const assignment = assignSharedBasePlan(options.participantId ?? 'P001');
+    const basePlan = createForestBasePlan(phase1Config);
     const initialPlan = materializeBasePlan(basePlan);
     this.#planner =
       this.#condition === 'adaptive'

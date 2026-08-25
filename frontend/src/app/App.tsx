@@ -38,7 +38,7 @@ import {
 } from '../calibration/integration.js';
 import type { Profile } from '../calibration/types.js';
 import {
-  assignMatchedBasePlans,
+  assignSharedBasePlan,
   BASE_PLAN_VERSION,
 } from '@neuroscape/adaptive-planner';
 
@@ -185,7 +185,7 @@ export function App() {
     setPage('session');
   };
   const startAdaptive = async (intent: AdaptiveSessionIntent) => {
-    const assignment = assignMatchedBasePlans(intent.participantId);
+    const assignment = assignSharedBasePlan(intent.participantId);
     setRealTimeRestartEnabled(false);
     if (intent.plannerMode === 'openai') {
       try {
@@ -218,8 +218,7 @@ export function App() {
       userPrompt: `10-minute Module 01/02 adaptive replay · ${intent.plannerMode}`,
       eegMode: 'recorded',
       startedAtIso: new Date().toISOString(),
-      basePlanId: assignment.adaptiveBasePlanId,
-      pairedBasePlanId: assignment.nonAdaptiveBasePlanId,
+      basePlanId: assignment.basePlanId,
       basePlanVersion: BASE_PLAN_VERSION,
       basePlanProfileId: 'forest_restrained_v1',
       assignmentRuleVersion: assignment.assignmentRuleVersion,
@@ -236,7 +235,7 @@ export function App() {
     void startAdaptiveAudio();
   };
   const startCalibratedAdaptive = async (profile: Profile) => {
-    const assignment = assignMatchedBasePlans(profile.participant_id);
+    const assignment = assignSharedBasePlan(profile.participant_id);
     try {
       const response = await fetch('/api/llm/health');
       const health = (await response.json()) as { configured?: boolean };
@@ -263,8 +262,7 @@ export function App() {
         eegMode: 'muse',
         startedAtIso: new Date().toISOString(),
         calibrationProfile: plannerProfile,
-        basePlanId: assignment.adaptiveBasePlanId,
-        pairedBasePlanId: assignment.nonAdaptiveBasePlanId,
+        basePlanId: assignment.basePlanId,
         basePlanVersion: BASE_PLAN_VERSION,
         basePlanProfileId: 'forest_restrained_v1',
         assignmentRuleVersion: assignment.assignmentRuleVersion,
@@ -314,7 +312,7 @@ export function App() {
     setPage('session');
   };
   const startNonAdaptive = async (participantId: string) => {
-    const assignment = assignMatchedBasePlans(participantId);
+    const assignment = assignSharedBasePlan(participantId);
     try {
       const recorder = new LiveRawEegRecorder();
       await recorder.start();
@@ -339,8 +337,7 @@ export function App() {
       userPrompt:
         'Approved fixed 10-minute non-adaptive trajectory; Muse EEG is recorded for analysis but is not used for adaptation',
       startedAtIso: new Date().toISOString(),
-      basePlanId: assignment.nonAdaptiveBasePlanId,
-      pairedBasePlanId: assignment.adaptiveBasePlanId,
+      basePlanId: assignment.basePlanId,
       basePlanVersion: BASE_PLAN_VERSION,
       basePlanProfileId: 'forest_restrained_v1',
       assignmentRuleVersion: assignment.assignmentRuleVersion,

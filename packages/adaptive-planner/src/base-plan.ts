@@ -6,8 +6,8 @@ import type {
 } from '@neuroscape/contracts';
 import type { AdaptivePlannerConfig } from './config.js';
 
-export const BASE_PLAN_VERSION = 'base_plan_v2';
-export const ASSIGNMENT_RULE_VERSION = 'matched_ab_v1';
+export const BASE_PLAN_VERSION = 'base_plan_v3';
+export const ASSIGNMENT_RULE_VERSION = 'shared_base_v1';
 
 export type BasePlanPhaseId =
   'settling' | 'deepening' | 'sustaining' | 'closing';
@@ -53,7 +53,7 @@ export interface BasePlanElement {
 }
 
 export interface BaseScenePlan {
-  planId: 'forest_A' | 'forest_B';
+  planId: 'forest_base';
   version: typeof BASE_PLAN_VERSION;
   profile: BasePlanProfile;
   phases: BasePlanPhase[];
@@ -77,8 +77,7 @@ export interface BasePlanMetrics {
 export interface BasePlanAssignment {
   participantId: string;
   conditionOrder: ['non_adaptive', 'adaptive'] | ['adaptive', 'non_adaptive'];
-  nonAdaptiveBasePlanId: BaseScenePlan['planId'];
-  adaptiveBasePlanId: BaseScenePlan['planId'];
+  basePlanId: BaseScenePlan['planId'];
   assignmentRuleVersion: typeof ASSIGNMENT_RULE_VERSION;
 }
 
@@ -178,10 +177,11 @@ const event = (
   },
 });
 
-export function createMatchedForestBasePlans(
+export function createForestBasePlan(
   config: AdaptivePlannerConfig,
-): readonly [BaseScenePlan, BaseScenePlan] {
-  const shared: Omit<BaseScenePlan, 'planId' | 'scheduledElements'> = {
+): BaseScenePlan {
+  return {
+    planId: 'forest_base',
     version: BASE_PLAN_VERSION,
     profile: profile(config),
     phases: phases(),
@@ -193,14 +193,10 @@ export function createMatchedForestBasePlans(
       defaultDurationMs: 5_000,
       curve: 'smoothstep' as const,
     },
-  };
-  const a: BaseScenePlan = {
-    ...structuredClone(shared),
-    planId: 'forest_A',
     scheduledElements: [
-      ambient('base-a-bed', 'forest_ambient_bed_01', 0.38),
+      ambient('base-ambient', 'forest_ambient_bed_01', 0.38),
       event(
-        'base-a-bird',
+        'base-bird-early',
         'forest_bird_far_01',
         155_000,
         8_000,
@@ -208,55 +204,15 @@ export function createMatchedForestBasePlans(
         'forest_entry',
       ),
       event(
-        'base-a-leaves',
-        'forest_leaf_rustle_mid_01',
-        335_000,
-        7_000,
-        0.24,
-        'clearing',
-      ),
-      event(
-        'base-a-drop',
-        'forest_water_drop_far_01',
-        485_000,
-        6_000,
-        0.2,
-        'waterfall',
-      ),
-    ],
-  };
-  const b: BaseScenePlan = {
-    ...structuredClone(shared),
-    planId: 'forest_B',
-    scheduledElements: [
-      ambient('base-b-bed', 'forest_ambient_bed_02', 0.36),
-      event(
-        'base-b-leaves',
-        'forest_leaf_rustle_mid_01',
-        145_000,
-        7_000,
-        0.24,
-        'stream_bank',
-      ),
-      event(
-        'base-b-bird',
+        'base-bird-late',
         'forest_bird_far_02',
         350_000,
         8_000,
         0.2,
-        'forest_entry',
-      ),
-      event(
-        'base-b-owl',
-        'forest_soft_owl_far_01',
-        495_000,
-        7_000,
-        0.1,
-        'waterfall',
+        'stream_bank',
       ),
     ],
   };
-  return [a, b];
 }
 
 export function measureBasePlan(plan: BaseScenePlan): BasePlanMetrics {
@@ -311,49 +267,16 @@ export function validateBasePlan(plan: BaseScenePlan): string[] {
   return errors;
 }
 
-export function validateMatchedBasePlans(
-  a: BaseScenePlan,
-  b: BaseScenePlan,
-  tolerance: number,
-): string[] {
-  const errors = [...validateBasePlan(a), ...validateBasePlan(b)];
-  const am = measureBasePlan(a);
-  const bm = measureBasePlan(b);
-  for (const key of [
-    'durationMs',
-    'phaseCount',
-    'ambientCount',
-    'eventCount',
-    'bodyAnchorCount',
-    'peakConcurrentSources',
-  ] as const) {
-    const scale = Math.max(1, am[key], bm[key]);
-    if (Math.abs(am[key] - bm[key]) / scale > tolerance)
-      errors.push(`matched_metric_mismatch:${key}`);
-  }
-  if (
-    JSON.stringify(a.scheduledElements.map((e) => [e.assetId, e.startMs])) ===
-    JSON.stringify(b.scheduledElements.map((e) => [e.assetId, e.startMs]))
-  )
-    errors.push('matched_plans_must_not_be_identical');
-  return errors;
-}
-
-export function assignMatchedBasePlans(
+export function assignSharedBasePlan(
   participantId: string,
   adaptiveFirst = false,
 ): BasePlanAssignment {
-  const parity =
-    [...participantId].reduce((sum, c) => sum + c.charCodeAt(0), 0) % 2;
-  const nonAdaptiveBasePlanId = parity === 0 ? 'forest_A' : 'forest_B';
   return {
     participantId,
     conditionOrder: adaptiveFirst
       ? ['adaptive', 'non_adaptive']
       : ['non_adaptive', 'adaptive'],
-    nonAdaptiveBasePlanId,
-    adaptiveBasePlanId:
-      nonAdaptiveBasePlanId === 'forest_A' ? 'forest_B' : 'forest_A',
+    basePlanId: 'forest_base',
     assignmentRuleVersion: ASSIGNMENT_RULE_VERSION,
   };
 }

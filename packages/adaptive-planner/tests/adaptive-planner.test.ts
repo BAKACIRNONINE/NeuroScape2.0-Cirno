@@ -4,7 +4,7 @@ import {
   MockDecisionProvider,
   MockPlanningProvider,
   createMockTbrReplay,
-  createMatchedForestBasePlans,
+  createForestBasePlan,
   initialForestPlan,
   mergePlanPatch,
   mockCalibrationProfile,
@@ -118,7 +118,7 @@ describe('adaptive planner Phase 1', () => {
   it.each(['APPLIED', 'FAILED'] as const)(
     'commits a Base Plan proposal only after runtime reports %s',
     async (applicationStatus) => {
-      const [basePlan] = createMatchedForestBasePlans(phase1Config);
+      const basePlan = createForestBasePlan(phase1Config);
       const planner = new AdaptivePlannerEngine({
         config: phase1Config,
         profile: mockCalibrationProfile,

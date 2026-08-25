@@ -36,7 +36,6 @@ export interface AdaptivePlannerConfig {
   maxSalienceLoad: number;
   reservedAdaptationHeadroom: number;
   maxCumulativePatches: number;
-  basePlanMatchTolerance: number;
 }
 
 /**
@@ -83,5 +82,4 @@ export const phase1Config: AdaptivePlannerConfig = Object.freeze({
   maxSalienceLoad: 1,
   reservedAdaptationHeadroom: 0.25,
   maxCumulativePatches: 6,
-  basePlanMatchTolerance: 0.15,
 });

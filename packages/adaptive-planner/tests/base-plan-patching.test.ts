@@ -1,35 +1,35 @@
 import { describe, expect, it } from 'vitest';
 import {
-  assignMatchedBasePlans,
-  createMatchedForestBasePlans,
+  assignSharedBasePlan,
+  createForestBasePlan,
   measureBasePlan,
   materializeBasePlan,
   normalizeLegacyPlanPatch,
   phase1Config,
   validateAndProjectPatch,
-  validateMatchedBasePlans,
   type FutureScenePatch,
   type SoundscapePlanPatch,
 } from '../src/index.js';
 
-describe('matched Base Plans and future patching', () => {
-  const [a, b] = createMatchedForestBasePlans(phase1Config);
-  it('provides distinct, complete, restrained and matched A/B plans', () => {
-    expect(
-      validateMatchedBasePlans(a, b, phase1Config.basePlanMatchTolerance),
-    ).toEqual([]);
-    expect(measureBasePlan(a).durationMs).toBe(600_000);
-    expect(measureBasePlan(b).durationMs).toBe(600_000);
-    expect(a.scheduledElements.map((e) => [e.assetId, e.startMs])).not.toEqual(
-      b.scheduledElements.map((e) => [e.assetId, e.startMs]),
-    );
+describe('shared Base Plan and future patching', () => {
+  const a = createForestBasePlan(phase1Config);
+  it('provides one complete restrained ambient-and-bird Base Plan', () => {
+    expect(measureBasePlan(a)).toMatchObject({
+      durationMs: 600_000,
+      ambientCount: 1,
+      eventCount: 2,
+      bodyAnchorCount: 0,
+    });
+    expect(a.scheduledElements.map((item) => item.assetId)).toEqual([
+      'forest_ambient_bed_01',
+      'forest_bird_far_01',
+      'forest_bird_far_02',
+    ]);
   });
-  it('counterbalances the two conditions deterministically', () => {
-    const assignment = assignMatchedBasePlans('P002');
-    expect(assignment.adaptiveBasePlanId).not.toBe(
-      assignment.nonAdaptiveBasePlanId,
-    );
-    expect(assignment.assignmentRuleVersion).toBe('matched_ab_v1');
+  it('assigns the same plan to both experimental conditions', () => {
+    const assignment = assignSharedBasePlan('P002');
+    expect(assignment.basePlanId).toBe('forest_base');
+    expect(assignment.assignmentRuleVersion).toBe('shared_base_v1');
   });
   const patch = (
     operation: FutureScenePatch['operations'][number],
@@ -39,7 +39,7 @@ describe('matched Base Plans and future patching', () => {
     intent: 'reduce_stimulation',
     salience: 'low',
     operations: [operation],
-    preservedElementIds: ['base-a-bed'],
+    preservedElementIds: ['base-ambient'],
     hypothesis: {
       mechanismCode: 'REDUCE_FOREGROUND',
       expectedResponseCode: 'REDUCE_VARIABILITY_OR_HALT_DECLINE',
@@ -54,12 +54,12 @@ describe('matched Base Plans and future patching', () => {
     'accepts future %s without touching the freeze buffer',
     (kind) => {
       const target = a.scheduledElements.find(
-        (e) => e.elementId === 'base-a-leaves',
+        (e) => e.elementId === 'base-bird-early',
       )!;
       const operation = {
         operation: kind,
         targetElementId: target.elementId,
-        effectiveStartMs: 330_000,
+        effectiveStartMs: 155_000,
         transitionMs: 5_000,
         ...(kind === 'ADJUST' ? { gain: 0.12 } : {}),
         ...(kind === 'REPLACE'
@@ -71,7 +71,7 @@ describe('matched Base Plans and future patching', () => {
           basePlan: a,
           acceptedPatches: [],
           proposedPatch: patch(operation),
-          nowMs: 200_000,
+          nowMs: 60_000,
           config: phase1Config,
         }).valid,
       ).toBe(true);
@@ -102,7 +102,7 @@ describe('matched Base Plans and future patching', () => {
     const noSafe = {
       ...patch({
         operation: 'KEEP',
-        targetElementId: 'base-a-bed',
+        targetElementId: 'base-ambient',
         effectiveStartMs: 220_000,
         transitionMs: 0,
       }),
@@ -125,16 +125,16 @@ describe('matched Base Plans and future patching', () => {
       acceptedPatches: [],
       proposedPatch: patch({
         operation: 'ADJUST',
-        targetElementId: 'base-a-leaves',
-        effectiveStartMs: 335_000,
+        targetElementId: 'base-bird-early',
+        effectiveStartMs: 155_000,
         transitionMs: 5_000,
         gain: 0.12,
       }),
-      nowMs: 200_000,
+      nowMs: 60_000,
       config: phase1Config,
     });
     const element = result.projectedPlan?.scheduledElements.find(
-      (item) => item.elementId === 'base-a-leaves',
+      (item) => item.elementId === 'base-bird-early',
     );
     expect(element?.gain).toBe(0.12);
     expect((element?.payload as { gain: number }).gain).toBe(0.12);
