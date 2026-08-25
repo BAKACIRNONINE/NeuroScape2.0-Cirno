@@ -237,10 +237,17 @@ export function normalizeLegacyPlanPatch(options: {
     });
   }
   const upserts = [
-    ...(patch.upsertAmbient ?? []).map((payload) => ({
-      layer: 'ambient' as const,
-      payload,
-    })),
+    ...(patch.upsertAmbient ?? []).map((payload) => {
+      // Strict structured outputs represent an omitted optional field as null.
+      // Module 03 requires global ambient sources to omit locationId entirely.
+      const normalizedPayload = structuredClone(payload);
+      if (normalizedPayload.mode === 'global')
+        delete normalizedPayload.locationId;
+      return {
+        layer: 'ambient' as const,
+        payload: normalizedPayload,
+      };
+    }),
     ...(patch.upsertAction ?? []).map((payload) => ({
       layer: 'action' as const,
       payload,

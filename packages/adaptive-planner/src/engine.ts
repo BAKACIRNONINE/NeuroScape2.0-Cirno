@@ -42,6 +42,16 @@ export class AdaptivePlannerEngine {
   #transitionUntilMs = 0;
   #basePlan?: BaseScenePlan;
   readonly #acceptedPatches: FutureScenePatch[] = [];
+  readonly #pendingApplications = new Map<
+    string,
+    {
+      basePlan: BaseScenePlan;
+      plan: SceneJourneyPlan;
+      patch: FutureScenePatch;
+      historyItem: AdaptationHistoryItem;
+      transitionUntilMs: number;
+    }
+  >();
   readonly #lifecycles = new Map<string, AdaptationLifecycle>();
   readonly #memory = new SessionAdaptationMemory();
   #requestSequence = 0;
@@ -203,9 +213,28 @@ export class AdaptivePlannerEngine {
         result.planning = planning;
         return result;
       }
-      this.#basePlan = validation.projectedPlan;
-      this.#acceptedPatches.push(futurePatch);
-      plan = materializeBasePlan(this.#basePlan);
+      const projectedBasePlan = validation.projectedPlan;
+      plan = materializeBasePlan(projectedBasePlan);
+      // Runtime validation/application is the commit boundary. Keep the
+      // projected state pending so a rejected plan cannot contaminate later
+      // Decision 1/2 context, cooldowns, or reflection history.
+      this.#pendingApplications.set(futurePatch.adaptationId, {
+        basePlan: projectedBasePlan,
+        plan: structuredClone(plan),
+        patch: futurePatch,
+        historyItem: {
+          timestampMs: state.timestampMs,
+          goal: decision.goal,
+          scope: decision.scope,
+          assetIds: planning.selectedAssetIds,
+          rationale: `${decision.rationale} ${planning.rationale}`,
+          intent: decision.intent,
+          salience: decision.salience,
+        },
+        transitionUntilMs:
+          state.timestampMs +
+          Math.max(planning.patch.transitionDurationMs ?? 0, 0),
+      });
     } else {
       plan = mergePlanPatch(
         this.#currentPlan,
@@ -213,18 +242,21 @@ export class AdaptivePlannerEngine {
         state.timestampMs,
       );
     }
-    this.#currentPlan = plan;
-    this.#transitionUntilMs =
-      state.timestampMs + Math.max(planning.patch.transitionDurationMs ?? 0, 0);
-    this.#history.push({
-      timestampMs: state.timestampMs,
-      goal: decision.goal,
-      scope: decision.scope,
-      assetIds: planning.selectedAssetIds,
-      rationale: `${decision.rationale} ${planning.rationale}`,
-      intent: decision.intent,
-      salience: decision.salience,
-    });
+    if (!this.#basePlan) {
+      this.#currentPlan = plan;
+      this.#transitionUntilMs =
+        state.timestampMs +
+        Math.max(planning.patch.transitionDurationMs ?? 0, 0);
+      this.#history.push({
+        timestampMs: state.timestampMs,
+        goal: decision.goal,
+        scope: decision.scope,
+        assetIds: planning.selectedAssetIds,
+        rationale: `${decision.rationale} ${planning.rationale}`,
+        intent: decision.intent,
+        salience: decision.salience,
+      });
+    }
     result.planning = planning;
     result.plan = structuredClone(plan);
     return result;
@@ -253,7 +285,15 @@ export class AdaptivePlannerEngine {
     const lifecycle = this.#lifecycles.get(adaptationId);
     if (!lifecycle) return;
     lifecycle.transitions.push({ status, timestampMs });
+    const pending = this.#pendingApplications.get(adaptationId);
     if (status === 'APPLIED') {
+      if (pending) {
+        this.#basePlan = structuredClone(pending.basePlan);
+        this.#currentPlan = structuredClone(pending.plan);
+        this.#acceptedPatches.push(pending.patch);
+        this.#history.push(pending.historyItem);
+        this.#transitionUntilMs = pending.transitionUntilMs;
+      }
       lifecycle.appliedAtMs = timestampMs;
       lifecycle.transitions.push({
         status: 'WAITING_FOR_OBSERVATION',
@@ -267,6 +307,7 @@ export class AdaptivePlannerEngine {
       lifecycle.transitionCompletedAtMs =
         lifecycle.transitions.at(-1)!.timestampMs;
     }
+    this.#pendingApplications.delete(adaptationId);
   }
 
   private evaluatePendingOutcome(

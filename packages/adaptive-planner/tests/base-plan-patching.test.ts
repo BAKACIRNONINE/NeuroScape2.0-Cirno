@@ -3,10 +3,13 @@ import {
   assignMatchedBasePlans,
   createMatchedForestBasePlans,
   measureBasePlan,
+  materializeBasePlan,
+  normalizeLegacyPlanPatch,
   phase1Config,
   validateAndProjectPatch,
   validateMatchedBasePlans,
   type FutureScenePatch,
+  type SoundscapePlanPatch,
 } from '../src/index.js';
 
 describe('matched Base Plans and future patching', () => {
@@ -135,5 +138,59 @@ describe('matched Base Plans and future patching', () => {
     );
     expect(element?.gain).toBe(0.12);
     expect((element?.payload as { gain: number }).gain).toBe(0.12);
+  });
+
+  it('omits schema-required null locationId from inserted global ambient', () => {
+    const futurePatch = normalizeLegacyPlanPatch({
+      adaptationId: 'adapt-global-ambient',
+      patch: {
+        reasoningSummary: 'Add a quiet stream bed.',
+        upsertAmbient: [
+          {
+            id: 'adapt-stream',
+            assetId: 'forest_stream_ambient_bed_01',
+            mode: 'global',
+            locationId: null,
+            gain: 0.58,
+            active: true,
+          },
+        ],
+        transitionDurationMs: 4_000,
+      } as unknown as SoundscapePlanPatch,
+      decision: {
+        decision: 'adapt',
+        intent: 'support_sustained_focus',
+        salience: 'minimal',
+        evidenceSummary: {
+          position: 'focus-leaning',
+          trajectory: 'stable',
+          confidence: 'low',
+        },
+        reason: 'stasis pressure',
+        maintainReason: null,
+        constraintsForDecision2: [],
+        shouldAdapt: true,
+        goal: 'support-sustained-focus',
+        scope: 'within-scene',
+        rationale: 'test',
+        provider: 'test',
+      },
+      basePlan: a,
+      nowMs: 220_000,
+      freezeBufferMs: phase1Config.executionFreezeBufferMs,
+    });
+    const validation = validateAndProjectPatch({
+      basePlan: a,
+      acceptedPatches: [],
+      proposedPatch: futurePatch,
+      nowMs: 220_000,
+      config: phase1Config,
+    });
+    expect(validation.valid).toBe(true);
+    const runtimePlan = materializeBasePlan(validation.projectedPlan!);
+    const stream = runtimePlan.soundscape.ambient.find(
+      (item) => item.id === 'adapt-stream',
+    );
+    expect(stream).not.toHaveProperty('locationId');
   });
 });

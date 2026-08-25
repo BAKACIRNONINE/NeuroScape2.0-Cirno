@@ -4,6 +4,7 @@ import {
   MockDecisionProvider,
   MockPlanningProvider,
   createMockTbrReplay,
+  createMatchedForestBasePlans,
   initialForestPlan,
   mergePlanPatch,
   mockCalibrationProfile,
@@ -113,4 +114,91 @@ describe('adaptive planner Phase 1', () => {
     });
     expect(forestBed).not.toHaveProperty('locationId');
   });
+
+  it.each(['APPLIED', 'FAILED'] as const)(
+    'commits a Base Plan proposal only after runtime reports %s',
+    async (applicationStatus) => {
+      const [basePlan] = createMatchedForestBasePlans(phase1Config);
+      const planner = new AdaptivePlannerEngine({
+        config: phase1Config,
+        profile: mockCalibrationProfile,
+        initialPlan: initialForestPlan,
+        basePlan,
+        decisionProvider: {
+          decide: async () => ({
+            decision: 'adapt',
+            intent: 'support_sustained_focus',
+            salience: 'minimal',
+            evidenceSummary: {
+              position: 'focus-leaning',
+              trajectory: 'stable',
+              confidence: 'low',
+            },
+            reason: 'test proposal',
+            maintainReason: null,
+            constraintsForDecision2: [],
+            shouldAdapt: true,
+            goal: 'support-sustained-focus',
+            scope: 'within-scene',
+            rationale: 'test proposal',
+            provider: 'test',
+          }),
+        },
+        planningProvider: {
+          plan: async () => ({
+            patch: {
+              reasoningSummary: 'Add a quiet stream.',
+              upsertAmbient: [
+                {
+                  id: 'pending-stream',
+                  assetId: 'forest_stream_ambient_bed_01',
+                  mode: 'global',
+                  gain: 0.58,
+                  active: true,
+                },
+              ],
+              transitionDurationMs: 4_000,
+            },
+            selectedAssetIds: ['forest_stream_ambient_bed_01'],
+            candidateAssetIds: ['forest_stream_ambient_bed_01'],
+            promptVersion: 'test',
+            prompt: 'test',
+            outputSchema: {},
+            rationale: 'test',
+            provider: 'test',
+          }),
+        },
+      });
+      let proposal;
+      for (const epoch of createMockTbrReplay()) {
+        const result = await planner.ingest(epoch);
+        if (result?.futurePatch) {
+          proposal = result;
+          break;
+        }
+      }
+      expect(proposal?.plan?.soundscape.ambient).toContainEqual(
+        expect.objectContaining({ id: 'pending-stream' }),
+      );
+      expect(planner.currentPlan.soundscape.ambient).not.toContainEqual(
+        expect.objectContaining({ id: 'pending-stream' }),
+      );
+      expect(planner.history).toHaveLength(0);
+
+      planner.acknowledgeApplication(
+        proposal!.futurePatch!.adaptationId,
+        applicationStatus,
+        proposal!.state.timestampMs,
+      );
+
+      const committed = applicationStatus === 'APPLIED';
+      expect(
+        planner.currentPlan.soundscape.ambient.some(
+          (item) => item.id === 'pending-stream',
+        ),
+      ).toBe(committed);
+      expect(planner.history).toHaveLength(committed ? 1 : 0);
+      expect(planner.acceptedPatches).toHaveLength(committed ? 1 : 0);
+    },
+  );
 });
