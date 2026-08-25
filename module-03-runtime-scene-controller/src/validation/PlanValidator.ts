@@ -1,4 +1,4 @@
-import type { SceneJourneyPlan } from '@neuroscape/contracts';
+import { audioLibraryById, type SceneJourneyPlan } from '@neuroscape/contracts';
 import type { SceneGraph } from '../scene-graph/SceneGraph.js';
 
 export interface PlanValidationResult {
@@ -31,10 +31,18 @@ export class PlanValidator {
     validateTransitionPolicy(candidate.transitionPolicy, errors);
 
     if (errors.length > 0) return { valid: false, errors };
-    return { valid: true, errors: [], plan: candidate as unknown as SceneJourneyPlan };
+    return {
+      valid: true,
+      errors: [],
+      plan: candidate as unknown as SceneJourneyPlan,
+    };
   }
 
-  private validateJourney(value: unknown, horizonSec: number | undefined, errors: string[]): void {
+  private validateJourney(
+    value: unknown,
+    horizonSec: number | undefined,
+    errors: string[],
+  ): void {
     if (!isRecord(value)) {
       errors.push('userJourney must be an object.');
       return;
@@ -53,14 +61,22 @@ export class PlanValidator {
         errors.push(`${path} must be an object.`);
         return;
       }
-      const locationId = requireString(waypoint.locationId, `${path}.locationId`, errors);
+      const locationId = requireString(
+        waypoint.locationId,
+        `${path}.locationId`,
+        errors,
+      );
       if (locationId && !this.sceneGraph.hasNode(locationId)) {
-        errors.push(`${path}.locationId references unknown location ${locationId}.`);
+        errors.push(
+          `${path}.locationId references unknown location ${locationId}.`,
+        );
       }
       if (locationId && previousLocation && locationId !== previousLocation) {
         const previousNode = this.sceneGraph.getNode(previousLocation);
         if (previousNode && !previousNode.neighbors.includes(locationId)) {
-          errors.push(`${path}.locationId is not connected to previous location ${previousLocation}.`);
+          errors.push(
+            `${path}.locationId is not connected to previous location ${previousLocation}.`,
+          );
         }
       }
       if (locationId) previousLocation = locationId;
@@ -72,7 +88,8 @@ export class PlanValidator {
           errors,
         );
         if (arrival !== undefined) {
-          if (arrival < previousArrival) errors.push(`${path}.arrivalTimeMs must be monotonic.`);
+          if (arrival < previousArrival)
+            errors.push(`${path}.arrivalTimeMs must be monotonic.`);
           if (horizonSec !== undefined && arrival > horizonSec * 1000) {
             errors.push(`${path}.arrivalTimeMs exceeds the planning horizon.`);
           }
@@ -80,7 +97,11 @@ export class PlanValidator {
         }
       }
       if (waypoint.pauseDurationMs !== undefined) {
-        requireNonNegativeNumber(waypoint.pauseDurationMs, `${path}.pauseDurationMs`, errors);
+        requireNonNegativeNumber(
+          waypoint.pauseDurationMs,
+          `${path}.pauseDurationMs`,
+          errors,
+        );
       }
     });
   }
@@ -94,9 +115,37 @@ export class PlanValidator {
     this.validateAmbient(value.ambient, ids, errors);
     validateAction(value.action, ids, errors);
     this.validateEvents(value.event, ids, errors);
+    const ambient = Array.isArray(value.ambient) ? value.ambient : [];
+    const events = Array.isArray(value.event) ? value.event : [];
+    const hasStream = ambient.some(
+      (item) =>
+        isRecord(item) &&
+        typeof item.assetId === 'string' &&
+        item.assetId.includes('stream'),
+    );
+    events.forEach((item, index) => {
+      if (!isRecord(item) || item.assetId !== 'forest_water_drop_far_01')
+        return;
+      const hasWaterLocation =
+        Array.isArray(item.trajectory) &&
+        item.trajectory.some(
+          (waypoint) =>
+            isRecord(waypoint) &&
+            (waypoint.locationId === 'stream_bank' ||
+              waypoint.locationId === 'waterfall'),
+        );
+      if (!hasStream && !hasWaterLocation)
+        errors.push(
+          `soundscape.event[${index}] requires an established stream/water context.`,
+        );
+    });
   }
 
-  private validateAmbient(value: unknown, ids: Set<string>, errors: string[]): void {
+  private validateAmbient(
+    value: unknown,
+    ids: Set<string>,
+    errors: string[],
+  ): void {
     if (!Array.isArray(value)) {
       errors.push('soundscape.ambient must be an array.');
       return;
@@ -105,15 +154,23 @@ export class PlanValidator {
       const path = `soundscape.ambient[${index}]`;
       if (!isRecord(item)) return errors.push(`${path} must be an object.`);
       validateRuntimeObjectIdentity(item, path, ids, errors);
+      validateAssetLayer(item.assetId, 'ambient', path, errors);
       if (item.mode !== 'global' && item.mode !== 'localized') {
         errors.push(`${path}.mode must be global or localized.`);
       }
       validateGain(item.gain, `${path}.gain`, errors);
-      if (typeof item.active !== 'boolean') errors.push(`${path}.active must be boolean.`);
+      if (typeof item.active !== 'boolean')
+        errors.push(`${path}.active must be boolean.`);
       if (item.mode === 'localized') {
-        const locationId = requireString(item.locationId, `${path}.locationId`, errors);
+        const locationId = requireString(
+          item.locationId,
+          `${path}.locationId`,
+          errors,
+        );
         if (locationId && !this.sceneGraph.hasNode(locationId)) {
-          errors.push(`${path}.locationId references unknown location ${locationId}.`);
+          errors.push(
+            `${path}.locationId references unknown location ${locationId}.`,
+          );
         }
       } else if (item.locationId !== undefined) {
         errors.push(`${path}.locationId must be omitted for global ambient.`);
@@ -121,7 +178,11 @@ export class PlanValidator {
     });
   }
 
-  private validateEvents(value: unknown, ids: Set<string>, errors: string[]): void {
+  private validateEvents(
+    value: unknown,
+    ids: Set<string>,
+    errors: string[],
+  ): void {
     if (!Array.isArray(value)) {
       errors.push('soundscape.event must be an array.');
       return;
@@ -130,7 +191,12 @@ export class PlanValidator {
       const path = `soundscape.event[${index}]`;
       if (!isRecord(item)) return errors.push(`${path} must be an object.`);
       validateRuntimeObjectIdentity(item, path, ids, errors);
-      requireNonNegativeNumber(item.activationTimeMs, `${path}.activationTimeMs`, errors);
+      validateAssetLayer(item.assetId, 'event', path, errors);
+      requireNonNegativeNumber(
+        item.activationTimeMs,
+        `${path}.activationTimeMs`,
+        errors,
+      );
       requirePositiveNumber(item.durationMs, `${path}.durationMs`, errors);
       validateGain(item.gain, `${path}.gain`, errors);
       if (!Array.isArray(item.trajectory) || item.trajectory.length === 0) {
@@ -140,10 +206,17 @@ export class PlanValidator {
       let previousTimestamp = -1;
       item.trajectory.forEach((waypoint, waypointIndex) => {
         const waypointPath = `${path}.trajectory[${waypointIndex}]`;
-        if (!isRecord(waypoint)) return errors.push(`${waypointPath} must be an object.`);
-        const locationId = requireString(waypoint.locationId, `${waypointPath}.locationId`, errors);
+        if (!isRecord(waypoint))
+          return errors.push(`${waypointPath} must be an object.`);
+        const locationId = requireString(
+          waypoint.locationId,
+          `${waypointPath}.locationId`,
+          errors,
+        );
         if (locationId && !this.sceneGraph.hasNode(locationId)) {
-          errors.push(`${waypointPath}.locationId references unknown location ${locationId}.`);
+          errors.push(
+            `${waypointPath}.locationId references unknown location ${locationId}.`,
+          );
         }
         const timestamp = requireNonNegativeNumber(
           waypoint.timestampMs,
@@ -161,7 +234,11 @@ export class PlanValidator {
   }
 }
 
-function validateAction(value: unknown, ids: Set<string>, errors: string[]): void {
+function validateAction(
+  value: unknown,
+  ids: Set<string>,
+  errors: string[],
+): void {
   if (!Array.isArray(value)) {
     errors.push('soundscape.action must be an array.');
     return;
@@ -171,13 +248,34 @@ function validateAction(value: unknown, ids: Set<string>, errors: string[]): voi
     const path = `soundscape.action[${index}]`;
     if (!isRecord(item)) return errors.push(`${path} must be an object.`);
     validateRuntimeObjectIdentity(item, path, ids, errors);
-    if (typeof item.attachment !== 'string' || !attachments.has(item.attachment)) {
+    validateAssetLayer(item.assetId, 'action', path, errors);
+    if (
+      typeof item.attachment !== 'string' ||
+      !attachments.has(item.attachment)
+    ) {
       errors.push(`${path}.attachment is invalid.`);
     }
-    if (!isVector3(item.relativePosition)) errors.push(`${path}.relativePosition must be a Vector3.`);
+    if (!isVector3(item.relativePosition))
+      errors.push(`${path}.relativePosition must be a Vector3.`);
     validateGain(item.gain, `${path}.gain`, errors);
-    if (typeof item.active !== 'boolean') errors.push(`${path}.active must be boolean.`);
+    if (typeof item.active !== 'boolean')
+      errors.push(`${path}.active must be boolean.`);
   });
+}
+
+function validateAssetLayer(
+  assetId: unknown,
+  expectedLayer: 'ambient' | 'action' | 'event',
+  path: string,
+  errors: string[],
+): void {
+  if (typeof assetId !== 'string') return;
+  const asset = audioLibraryById.get(assetId);
+  // Legacy demo aliases remain accepted; canonical IDs must match their layer.
+  if (asset && asset.layer !== expectedLayer)
+    errors.push(
+      `${path}.assetId ${assetId} belongs to ${asset.layer}, not ${expectedLayer}.`,
+    );
 }
 
 function validateTransitionPolicy(value: unknown, errors: string[]): void {
@@ -185,7 +283,11 @@ function validateTransitionPolicy(value: unknown, errors: string[]): void {
     errors.push('transitionPolicy must be an object.');
     return;
   }
-  requirePositiveNumber(value.defaultDurationMs, 'transitionPolicy.defaultDurationMs', errors);
+  requirePositiveNumber(
+    value.defaultDurationMs,
+    'transitionPolicy.defaultDurationMs',
+    errors,
+  );
   const curves = new Set(['linear', 'smoothstep', 'cubic', 'catmull-rom']);
   if (typeof value.curve !== 'string' || !curves.has(value.curve)) {
     errors.push('transitionPolicy.curve is invalid.');
@@ -201,7 +303,8 @@ function validateRuntimeObjectIdentity(
   const id = requireString(value.id, `${path}.id`, errors);
   requireString(value.assetId, `${path}.assetId`, errors);
   if (id) {
-    if (ids.has(id)) errors.push(`${path}.id duplicates runtime object id ${id}.`);
+    if (ids.has(id))
+      errors.push(`${path}.id duplicates runtime object id ${id}.`);
     ids.add(id);
   }
 }
@@ -212,7 +315,11 @@ function validateGain(value: unknown, path: string, errors: string[]): void {
   }
 }
 
-function requireString(value: unknown, path: string, errors: string[]): string | undefined {
+function requireString(
+  value: unknown,
+  path: string,
+  errors: string[],
+): string | undefined {
   if (typeof value !== 'string' || value.trim().length === 0) {
     errors.push(`${path} must be a non-empty string.`);
     return undefined;
@@ -253,5 +360,7 @@ function isFiniteNumber(value: unknown): value is number {
 }
 
 function isVector3(value: unknown): boolean {
-  return Array.isArray(value) && value.length === 3 && value.every(isFiniteNumber);
+  return (
+    Array.isArray(value) && value.length === 3 && value.every(isFiniteNumber)
+  );
 }

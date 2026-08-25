@@ -267,9 +267,20 @@ export class MockPlanningProvider implements PlanningProvider {
         input.candidates.find((item) => item.tags.includes('breath')) ??
         input.candidates.find((item) => item.layer === 'action');
       if (!candidate)
-        throw new Error(
-          'No body-anchor candidate is available for Decision 2.',
-        );
+        return {
+          patch: {
+            reasoningSummary:
+              'No legal body-anchor candidate is available; continue the Base Plan.',
+          },
+          selectedAssetIds: [],
+          candidateAssetIds: input.candidates.map((item) => item.assetId),
+          promptVersion: input.promptVersion,
+          prompt: input.prompt,
+          outputSchema: input.outputSchema,
+          rationale:
+            'NO_SAFE_PATCH: body-anchor contracts or cooldowns exclude all candidates.',
+          provider: 'mock-planner-v1',
+        };
       const action: ActionPlanItem = {
         id: 'breathing',
         assetId: candidate.assetId,

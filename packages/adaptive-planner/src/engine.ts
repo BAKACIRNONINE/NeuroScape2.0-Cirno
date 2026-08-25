@@ -167,6 +167,11 @@ export class AdaptivePlannerEngine {
       return result;
     }
     validateDecision2Selection(planning, decision2Input);
+    const validationCompletedSessionMs = Math.min(
+      state.timestampMs + this.#config.checkpointIntervalMs - 1,
+      state.timestampMs +
+        Math.ceil((decision.latencyMs ?? 0) + (planning.latencyMs ?? 0)),
+    );
     let plan: SceneJourneyPlan;
     if (this.#basePlan) {
       const futurePatch = normalizeLegacyPlanPatch({
@@ -174,14 +179,14 @@ export class AdaptivePlannerEngine {
         patch: planning.patch,
         decision,
         basePlan: this.#basePlan,
-        nowMs: state.timestampMs,
+        nowMs: validationCompletedSessionMs,
         freezeBufferMs: this.#config.executionFreezeBufferMs,
       });
       const validation = validateAndProjectPatch({
         basePlan: this.#basePlan,
         acceptedPatches: this.#acceptedPatches,
         proposedPatch: futurePatch,
-        nowMs: state.timestampMs,
+        nowMs: validationCompletedSessionMs,
         config: this.#config,
         recentAssetIds: this.#history.flatMap((item) => item.assetIds),
       });

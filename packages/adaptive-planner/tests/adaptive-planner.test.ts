@@ -145,28 +145,33 @@ describe('adaptive planner Phase 1', () => {
           }),
         },
         planningProvider: {
-          plan: async () => ({
-            patch: {
-              reasoningSummary: 'Add a quiet stream.',
-              upsertAmbient: [
-                {
-                  id: 'pending-stream',
-                  assetId: 'forest_stream_ambient_bed_01',
-                  mode: 'global',
-                  gain: 0.58,
-                  active: true,
-                },
-              ],
-              transitionDurationMs: 4_000,
-            },
-            selectedAssetIds: ['forest_stream_ambient_bed_01'],
-            candidateAssetIds: ['forest_stream_ambient_bed_01'],
-            promptVersion: 'test',
-            prompt: 'test',
-            outputSchema: {},
-            rationale: 'test',
-            provider: 'test',
-          }),
+          plan: async (_context, _decision, input) => {
+            const candidate = input.candidates.find(
+              (item) => item.layer === 'ambient',
+            )!;
+            return {
+              patch: {
+                reasoningSummary: 'Add a quiet stream.',
+                upsertAmbient: [
+                  {
+                    id: 'pending-stream',
+                    assetId: candidate.assetId,
+                    mode: 'global',
+                    gain: candidate.recommendedVolume,
+                    active: true,
+                  },
+                ],
+                transitionDurationMs: 4_000,
+              },
+              selectedAssetIds: [candidate.assetId],
+              candidateAssetIds: input.candidates.map((item) => item.assetId),
+              promptVersion: 'test',
+              prompt: 'test',
+              outputSchema: {},
+              rationale: 'test',
+              provider: 'test',
+            };
+          },
         },
       });
       let proposal;

@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { SceneGraph } from '../../src/scene-graph/SceneGraph.js';
 import { PlanValidator } from '../../src/validation/PlanValidator.js';
-import { sceneGraphDefinitionFixture, sceneJourneyPlanFixture } from '../fixtures/phase1Fixtures.js';
+import {
+  sceneGraphDefinitionFixture,
+  sceneJourneyPlanFixture,
+} from '../fixtures/phase1Fixtures.js';
 
 describe('PlanValidator', () => {
-  const validator = new PlanValidator(new SceneGraph(sceneGraphDefinitionFixture));
+  const validator = new PlanValidator(
+    new SceneGraph(sceneGraphDefinitionFixture),
+  );
 
   it('accepts a complete semantic plan', () => {
     const result = validator.validate(sceneJourneyPlanFixture);
@@ -24,7 +29,10 @@ describe('PlanValidator', () => {
       ...sceneJourneyPlanFixture,
       userJourney: {
         ...sceneJourneyPlanFixture.userJourney,
-        waypoints: [{ locationId: 'forest_entry' }, { locationId: 'stream_bank' }],
+        waypoints: [
+          { locationId: 'forest_entry' },
+          { locationId: 'stream_bank' },
+        ],
       },
     });
 
@@ -78,6 +86,33 @@ describe('PlanValidator', () => {
   });
 
   it('rejects malformed external input without throwing', () => {
-    expect(validator.validate(null)).toEqual({ valid: false, errors: ['Plan must be an object.'] });
+    expect(validator.validate(null)).toEqual({
+      valid: false,
+      errors: ['Plan must be an object.'],
+    });
+  });
+
+  it('rejects canonical assets in the wrong layer and water cues without water context', () => {
+    const wrongLayer = structuredClone(sceneJourneyPlanFixture);
+    wrongLayer.soundscape.ambient[0]!.assetId = 'forest_bird_far_01';
+    expect(validator.validate(wrongLayer).errors.join(' ')).toMatch(
+      /belongs to event, not ambient/,
+    );
+
+    const dryWaterCue = structuredClone(sceneJourneyPlanFixture);
+    dryWaterCue.soundscape.ambient = [];
+    dryWaterCue.soundscape.event = [
+      {
+        id: 'dry-water',
+        assetId: 'forest_water_drop_far_01',
+        activationTimeMs: 1_000,
+        durationMs: 16_823,
+        gain: 0.2,
+        trajectory: [{ locationId: 'clearing', timestampMs: 1_000 }],
+      },
+    ];
+    expect(validator.validate(dryWaterCue).errors.join(' ')).toMatch(
+      /requires an established stream\/water context/,
+    );
   });
 });

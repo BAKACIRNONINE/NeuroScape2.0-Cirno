@@ -134,9 +134,26 @@ export function buildDecision1Prompt(context: DecisionContext): string {
     'Provide a concise, inspectable rationale based only on supplied observations. Do not claim objective mind-wandering detection and do not expose hidden chain-of-thought.',
     `INPUT_JSON=${JSON.stringify({
       eegState: reasoningAttentionState(context.state),
-      recentAttentionStates: context.recentStates.map(reasoningAttentionState),
-      currentPlan: context.currentPlan,
-      recentAdaptations: context.history.slice(-6),
+      recentTrajectorySummary: context.recentStates.slice(-3).map((state) => ({
+        timestampMs: state.timestampMs,
+        relativePosition: state.relativePosition,
+        trajectory: state.trajectory,
+        measurementConfidence: state.measurementConfidence,
+        signalQuality: state.signalQuality,
+      })),
+      sceneSummary: {
+        planId: context.currentPlan.planId,
+        currentLocation:
+          context.currentPlan.userJourney.waypoints.at(-1)?.locationId,
+        activeAmbientIds: context.currentPlan.soundscape.ambient
+          .filter((item) => item.active)
+          .map((item) => item.id),
+        upcomingEventIds: context.currentPlan.soundscape.event
+          .filter((item) => item.activationTimeMs >= context.state.timestampMs)
+          .slice(0, 3)
+          .map((item) => item.id),
+      },
+      lastRelevantAdaptation: context.history.at(-1) ?? null,
       restrictions: context.restrictions,
       secondsSinceLastMeaningfulChange:
         context.secondsSinceLastMeaningfulChange,
@@ -227,6 +244,7 @@ export class OpenAIDecisionProvider implements DecisionProvider {
   }
 
   async decide(context: DecisionContext): Promise<AdaptationDecision> {
+    const startedAt = performance.now();
     const prompt = buildDecision1Prompt(context);
     const response = await requestStructuredOutput<Decision1WireOutput>(
       '/api/llm/decision-1',
@@ -298,6 +316,7 @@ export class OpenAIDecisionProvider implements DecisionProvider {
       model: response.model,
       responseId: response.responseId,
       usage: response.usage,
+      latencyMs: performance.now() - startedAt,
     };
     return decision;
   }
@@ -358,6 +377,7 @@ export class OpenAIPlanningProvider implements PlanningProvider {
     decision: AdaptationDecision,
     input: Decision2Input,
   ): Promise<PlanningResult> {
+    const startedAt = performance.now();
     const response = await requestStructuredOutput<Decision2WireOutput>(
       '/api/llm/decision-2',
       {
@@ -382,6 +402,7 @@ export class OpenAIPlanningProvider implements PlanningProvider {
       model: response.model,
       responseId: response.responseId,
       usage: response.usage,
+      latencyMs: performance.now() - startedAt,
     };
   }
 }

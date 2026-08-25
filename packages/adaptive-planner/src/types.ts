@@ -183,6 +183,7 @@ export interface AdaptationDecision {
   model?: string;
   responseId?: string;
   usage?: LlmUsage;
+  latencyMs?: number;
 }
 
 export interface LlmUsage {
@@ -214,6 +215,7 @@ export interface PlanningResult {
   model?: string;
   responseId?: string;
   usage?: LlmUsage;
+  latencyMs?: number;
   normalizedFuturePatch?: FutureScenePatch;
 }
 
@@ -247,6 +249,25 @@ export interface Decision2Candidate {
   priority: number;
   isPrimaryAmbient: boolean;
   isRareEvent: boolean;
+  qualityTier: 'preferred' | 'standard' | 'limited_use';
+  selectionWeight: number;
+  remainingSessionAppearances: number | null;
+  cooldownRemainingSec: number;
+  maxSafeGain: number;
+  qualityAttenuation: number;
+  playbackContractSummary: string;
+  compatibleEnvironmentalBonds: string[];
+}
+
+export interface OperationGuidance {
+  currentDensity: 'low' | 'medium' | 'high';
+  upcomingDensity: 'low' | 'medium' | 'high';
+  complexityHeadroom: number;
+  salienceHeadroom: number;
+  prolongedStasis: boolean;
+  preferredOperations: Array<
+    'KEEP' | 'ADJUST' | 'RESCHEDULE' | 'REPLACE' | 'SUPPRESS' | 'INSERT'
+  >;
 }
 
 export interface Decision2Input {
@@ -256,6 +277,7 @@ export interface Decision2Input {
   currentScene: string;
   candidates: Decision2Candidate[];
   reasoningEffort: 'low' | 'medium';
+  operationGuidance: OperationGuidance;
 }
 
 export interface DecisionProvider {

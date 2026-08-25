@@ -6,16 +6,19 @@ import type {
   Decision2Candidate,
   Decision2Input,
   DecisionContext,
+  OperationGuidance,
   PlanningResult,
 } from './types.js';
-import { reasoningAttentionState } from './types.js';
 
-export const DECISION_2_PROMPT_VERSION = 'decision-2-future-patch-v5';
+export const DECISION_2_PROMPT_VERSION = 'decision-2-spatial-contract-v6';
 
 function authoredEventDurationMs(candidate: Decision2Candidate): number {
+  const asset = audioLibraryById.get(candidate.assetId);
   return (
-    (candidate.defaultMotion.durationSec ?? candidate.autoDeleteAfterSec ?? 0) *
-    1_000
+    (asset?.playback_contract?.resolved_lifecycle_sec ??
+      candidate.defaultMotion.durationSec ??
+      candidate.autoDeleteAfterSec ??
+      0) * 1_000
   );
 }
 
@@ -62,7 +65,11 @@ function allowedLayers(
   context: DecisionContext,
 ): Set<AudioLibraryAsset['layer']> {
   if (decision.scope === 'scene-transition') {
-    return new Set(['ambient', 'event']);
+    return new Set(
+      context.restrictions.allowBodyAnchor
+        ? ['ambient', 'event', 'action']
+        : ['ambient', 'event'],
+    );
   }
 
   if (decision.goal === 'support-grounding') {
@@ -77,10 +84,23 @@ function allowedLayers(
     return new Set(['ambient']);
   }
 
+  if (
+    decision.goal === 'gently-reorient' &&
+    context.restrictions.allowBodyAnchor
+  ) {
+    return new Set(['ambient', 'event', 'action']);
+  }
+
   return new Set(['ambient', 'event']);
 }
 
-function candidateFromAsset(asset: AudioLibraryAsset): Decision2Candidate {
+function candidateFromAsset(
+  asset: AudioLibraryAsset,
+  appearanceCount: number,
+  cooldownRemainingSec: number,
+): Decision2Candidate {
+  const limits = asset.session_limits;
+  const gainProfile = asset.gain_profile;
   return {
     assetId: asset.asset_id,
     familyId: audioFamilyId(asset.asset_id),
@@ -117,6 +137,73 @@ function candidateFromAsset(asset: AudioLibraryAsset): Decision2Candidate {
     priority: asset.priority,
     isPrimaryAmbient: asset.is_primary_ambient,
     isRareEvent: asset.is_rare_event,
+    qualityTier: asset.quality_tier ?? 'standard',
+    selectionWeight: asset.selection_weight ?? 1,
+    remainingSessionAppearances:
+      limits?.max_appearances == null
+        ? null
+        : Math.max(0, limits.max_appearances - appearanceCount),
+    cooldownRemainingSec,
+    maxSafeGain: gainProfile?.max_safe_gain ?? 1,
+    qualityAttenuation: gainProfile?.quality_attenuation ?? 1,
+    playbackContractSummary: asset.playback_contract
+      ? `${asset.playback_contract.mode}; repeats ${asset.playback_contract.repeat_count_options.join('|')}; ${asset.playback_contract.envelope_kind}`
+      : 'single; metadata fade',
+    compatibleEnvironmentalBonds:
+      asset.narrative_compatibility?.requires_related_active_family != null
+        ? [asset.narrative_compatibility.requires_related_active_family]
+        : [],
+  };
+}
+
+function densityFor(count: number): 'low' | 'medium' | 'high' {
+  return count <= 1 ? 'low' : count === 2 ? 'medium' : 'high';
+}
+
+export function computeOperationGuidance(
+  context: DecisionContext,
+  config: AdaptivePlannerConfig,
+): OperationGuidance {
+  const now = context.state.timestampMs;
+  const active = [
+    ...context.currentPlan.soundscape.ambient.filter((item) => item.active),
+    ...context.currentPlan.soundscape.action.filter((item) => item.active),
+    ...context.currentPlan.soundscape.event.filter(
+      (item) =>
+        item.activationTimeMs <= now &&
+        now < item.activationTimeMs + item.durationMs,
+    ),
+  ];
+  const upcoming = context.upcomingBaseHorizon ?? [];
+  const currentDensity = densityFor(active.length);
+  const upcomingDensity = densityFor(
+    Math.max(active.length, ...upcoming.map(() => active.length + 1), 0),
+  );
+  const complexityHeadroom = Math.max(
+    0,
+    config.maxConcurrentSources - active.length,
+  );
+  const currentSalience = active.reduce(
+    (sum, item) => sum + (item.gain ?? 0),
+    0,
+  );
+  const salienceHeadroom = Math.max(
+    0,
+    config.maxSalienceLoad - currentSalience,
+  );
+  const high = currentDensity === 'high' || upcomingDensity === 'high';
+  const medium = currentDensity === 'medium' || upcomingDensity === 'medium';
+  return {
+    currentDensity,
+    upcomingDensity,
+    complexityHeadroom,
+    salienceHeadroom,
+    prolongedStasis: context.stasisPressure,
+    preferredOperations: high
+      ? ['SUPPRESS', 'RESCHEDULE', 'ADJUST', 'REPLACE', 'KEEP']
+      : medium
+        ? ['ADJUST', 'RESCHEDULE', 'REPLACE', 'INSERT', 'SUPPRESS']
+        : ['INSERT', 'ADJUST', 'REPLACE', 'RESCHEDULE', 'KEEP'],
   };
 }
 
@@ -155,6 +242,24 @@ export function retrieveDecision2Candidates(
       ? 'attention_low'
       : 'stability_high',
   ]);
+  const currentLocation =
+    context.currentPlan.userJourney.waypoints.at(-1)?.locationId ?? 'clearing';
+  const hasWaterBond =
+    currentLocation === 'stream_bank' ||
+    currentLocation === 'waterfall' ||
+    context.currentPlan.soundscape.ambient.some(
+      (item) => item.active && audioFamilyId(item.assetId).includes('stream'),
+    );
+  const appearanceTimes = (assetId: string): number[] => [
+    ...context.history
+      .filter((item) => item.assetIds.includes(assetId))
+      .map((item) => item.timestampMs),
+    ...context.currentPlan.soundscape.event
+      .filter(
+        (item) => item.assetId === assetId && item.activationTimeMs <= now,
+      )
+      .map((item) => item.activationTimeMs),
+  ];
 
   const scored = audioLibrary
     .filter(
@@ -164,19 +269,53 @@ export function retrieveDecision2Candidates(
         !activeAssets.has(asset.asset_id) &&
         !recentAssets.has(asset.asset_id) &&
         !recentFamilies.has(audioFamilyId(asset.asset_id)) &&
-        !asset.avoid_when.some((tag) => stateTags.has(tag)),
+        !asset.avoid_when.some((tag) => stateTags.has(tag)) &&
+        (asset.narrative_compatibility?.locations.length
+          ? asset.narrative_compatibility.locations.includes(currentLocation)
+          : true) &&
+        (!asset.narrative_compatibility?.requires_related_active_family ||
+          hasWaterBond) &&
+        (asset.layer !== 'action' ||
+          !asset.tags.includes('footstep') ||
+          decision.scope === 'scene-transition'),
     )
-    .map((asset) => ({
-      asset,
-      score:
-        asset.priority +
-        asset.use_when.filter((tag) => stateTags.has(tag)).length * 2 -
-        asset.suddenness -
-        asset.intensity * 0.25,
-    }))
+    .map((asset) => {
+      const times = appearanceTimes(asset.asset_id);
+      const limits = asset.session_limits;
+      const last = times.length ? Math.max(...times) : null;
+      const cooldownRemainingSec =
+        last == null || limits?.min_interval_sec_exclusive == null
+          ? 0
+          : Math.max(
+              0,
+              limits.min_interval_sec_exclusive - (now - last) / 1_000,
+            );
+      const limitReached =
+        limits?.max_appearances != null &&
+        times.length >= limits.max_appearances;
+      return {
+        asset,
+        appearanceCount: times.length,
+        cooldownRemainingSec,
+        legal:
+          !limitReached &&
+          cooldownRemainingSec === 0 &&
+          (last == null ||
+            now - last > (limits?.min_interval_sec_exclusive ?? -1) * 1_000),
+        score:
+          asset.priority * (asset.selection_weight ?? 1) +
+          asset.use_when.filter((tag) => stateTags.has(tag)).length * 2 -
+          asset.suddenness -
+          asset.intensity * 0.25 -
+          (asset.quality_tier === 'limited_use' ? 1.5 : 0),
+      };
+    })
+    .filter((item) => item.legal)
     .sort(
       (left, right) =>
         right.score - left.score ||
+        (left.asset.selection_rank_within_family ?? 99) -
+          (right.asset.selection_rank_within_family ?? 99) ||
         left.asset.asset_id.localeCompare(right.asset.asset_id),
     );
 
@@ -188,7 +327,9 @@ export function retrieveDecision2Candidates(
       perLayer.set(asset.layer, count + 1);
       return true;
     })
-    .map(({ asset }) => candidateFromAsset(asset));
+    .map(({ asset, appearanceCount, cooldownRemainingSec }) =>
+      candidateFromAsset(asset, appearanceCount, cooldownRemainingSec),
+    );
   return { currentScene, candidates };
 }
 
@@ -197,6 +338,7 @@ export function buildDecision2Prompt(
   decision: AdaptationDecision,
   currentScene: string,
   candidates: readonly Decision2Candidate[],
+  operationGuidance: OperationGuidance,
 ): string {
   const currentLocation =
     context.currentPlan.userJourney.waypoints.at(-1)?.locationId ?? 'clearing';
@@ -211,19 +353,58 @@ export function buildDecision2Prompt(
       scope: decision.scope,
       constraintsForDecision2: decision.constraintsForDecision2,
     },
-    eegState: reasoningAttentionState(context.state),
-    currentScene,
-    currentLocation,
-    listenerReachableLocations,
-    soundSourceLocationIds: Object.keys(locationScene),
-    activeRuntimeScene: {
-      journey: context.currentPlan.userJourney,
-      soundscape: context.currentPlan.soundscape,
+    executionContext: {
+      phase: context.state.phase,
+      currentScene,
+      currentLocation,
+      reachableLocations: listenerReachableLocations,
+      soundSourceLocationIds: Object.keys(locationScene),
+      activeJourney: context.currentPlan.userJourney,
+      activeSceneSummary: {
+        ambient: context.currentPlan.soundscape.ambient.map((item) => ({
+          id: item.id,
+          assetId: item.assetId,
+          gain: item.gain,
+          active: item.active,
+          mode: item.mode,
+          ...(item.locationId ? { locationId: item.locationId } : {}),
+        })),
+        action: context.currentPlan.soundscape.action.map((item) => ({
+          id: item.id,
+          assetId: item.assetId,
+          gain: item.gain,
+          active: item.active,
+          attachment: item.attachment,
+        })),
+        event: context.currentPlan.soundscape.event
+          .filter(
+            (item) =>
+              item.activationTimeMs + item.durationMs >=
+              context.state.timestampMs,
+          )
+          .map((item) => ({
+            id: item.id,
+            assetId: item.assetId,
+            gain: item.gain,
+            activationTimeMs: item.activationTimeMs,
+            durationMs: item.durationMs,
+          })),
+      },
+      upcomingHorizonSummary: (context.upcomingBaseHorizon ?? []).map(
+        (item) => ({
+          elementId: item.elementId,
+          assetId: item.assetId,
+          layer: item.layer,
+          startMs: item.startMs,
+          endMs: item.endMs,
+          gain: item.gain,
+          salience: item.salience,
+        }),
+      ),
+      operationGuidance,
+      restrictions: context.restrictions,
     },
-    upcomingBaseHorizon: context.upcomingBaseHorizon ?? [],
     relevantPriorOutcomes: context.relevantPriorOutcomes?.slice(0, 3) ?? [],
-    restrictions: context.restrictions,
-    existingFuturePatches: [],
     candidates,
   };
   return [
@@ -231,7 +412,15 @@ export function buildDecision2Prompt(
     'Decision 1 has already decided whether and why to adapt. You must not change its intent, reinterpret EEG, or override the code eligibility gate.',
     'Produce only a minimal future-facing local patch for the supplied upcoming Base Plan horizon. Past content and the execution freeze buffer are immutable.',
     'Maintain means the Base Plan continues its scheduled evolution; NO_SAFE_PATCH also safely continues that Base Plan.',
-    'Prefer KEEP, ADJUST, RESCHEDULE, REPLACE, or SUPPRESS before INSERT. Adaptation may simplify the scene and is not synonymous with adding sound.',
+    'Maintain a coherent spatial world, not just a collection of individually appropriate sounds.',
+    'Use the supplied currentLocation, reachableLocations, active journey, upcoming Base Plan horizon, and environmental-bond summaries to decide whether the listener remains stationary or undergoes a meaningful adjacent waypoint transition.',
+    'Do not imply listener movement unless a transition is explicitly selected. Footsteps support a physically meaningful transition and must not be inserted mechanically.',
+    'Waterfall-like sounds require an established stream/water context. Bird, owl, insect, leaf, and rustle events may occur independently of listener locomotion.',
+    'Prefer minimal sufficient changes. Adaptation is not synonymous with adding sound, but do not globally prefer editing existing sounds over insertion.',
+    'Follow operationGuidance: at low density a restrained INSERT is a first-class option; at medium density prefer adjustment, rescheduling, or replacement unless insertion fills a missing role; at high density simplify, suppress, remove, or reschedule.',
+    'Optimize temporal richness across the session, not simultaneous source density. New layers should normally be temporary or explicitly removed when their role is complete.',
+    'Sustained focus does not automatically require maintain. Prolonged stasis may justify minimal supportive evolution without claiming mind wandering.',
+    'Exact envelopes, repeats, gain limits, cooldowns, and session limits are enforced by shared metadata and code; select only supplied legal candidates.',
     'Treat every patch as a provisional hypothesis, never a proven intervention. Use only supplied structured prior outcomes and never infer causality from temporal order.',
     'Plan a restrained but perceptibly layered soundscape patch that realizes the supplied Decision 1 intent, salience, scope, and constraintsForDecision2. When appropriate, combine one subtle ambient adjustment with at most one event or body-anchored action.',
     'Apply this goal-to-layer policy whenever restrictions permit and a compatible candidate exists:',
@@ -244,12 +433,12 @@ export function buildDecision2Prompt(
     'If the most recent adaptation selected only ambient assets, prioritize an eligible event or action in this patch instead of making another ambient-only change.',
     'At least one newly selected asset should create an actually audible source change; do not claim adaptation while merely restating the current plan.',
     'Use only assetId values in candidates. Never invent an asset, location, motion, duration, gain, or numerical range.',
-    'Treat candidate metadata as authoritative: description, scene, layer, tags, loop, intensity, suddenness, useWhen, avoidWhen, spatialBehavior, defaultPosition, defaultMotion.durationSec, autoDeleteAfterSec, fades, and recommendedVolume.',
+    'Treat candidate summaries as authoritative. Do not override their resolved recommendedVolume, authored duration, playback contract, limits, compatibility, or quality attenuation.',
     'For an event, durationMs MUST equal defaultMotion.durationSec * 1000 when defaultMotion.durationSec is non-null; otherwise it MUST equal autoDeleteAfterSec * 1000. autoDeleteAfterSec is only the fallback lifecycle when no authored motion duration exists. A looping asset may remain active until a later patch removes it.',
     'Prefer an unused compatible variant and respect the already-applied exact-asset and family cooldown filtering.',
     'Add at most one new salient event in one patch. Event-source movement is not listener movement. A body-anchored action does not require a scene transition. Footsteps imply listener movement only when explicitly assigned a locomotion role.',
     'For within-scene adaptation, preserve the listener location and semantic scene. For scene-transition scope, preserve narrative continuity and use only scene-compatible candidates.',
-    'Journey waypoints must use only listenerReachableLocations. Sound-source waypoints must use only soundSourceLocationIds.',
+    'Journey waypoints must use only reachableLocations. Sound-source waypoints must use only soundSourceLocationIds.',
     'If no candidate can safely realize the requested adaptation, return no selected assets and explain that the planner must maintain rather than invent content.',
     'Return only a strict SoundscapePlanPatch-compatible JSON object plus selectedAssetIds and a concise inspectable rationale. Do not expose hidden chain-of-thought.',
     `INPUT_JSON=${JSON.stringify(payload)}`,
@@ -580,13 +769,21 @@ export function prepareDecision2Input(
     decision,
     config,
   );
+  const operationGuidance = computeOperationGuidance(context, config);
   return {
     promptVersion: DECISION_2_PROMPT_VERSION,
     currentScene,
     candidates,
-    prompt: buildDecision2Prompt(context, decision, currentScene, candidates),
+    prompt: buildDecision2Prompt(
+      context,
+      decision,
+      currentScene,
+      candidates,
+      operationGuidance,
+    ),
     outputSchema: buildDecision2OutputSchema(candidates, context),
     reasoningEffort: assessPatchComplexity(context, decision),
+    operationGuidance,
   };
 }
 
@@ -664,6 +861,17 @@ export function validateDecision2Selection(
       `Decision 2 placed assets in the wrong sound layer: ${layerErrors
         .map(({ assetId, expected }) => `${assetId}→${expected}`)
         .join(', ')}`,
+    );
+  const attachmentErrors = (result.patch.upsertAction ?? []).filter((item) => {
+    const asset = audioLibraryById.get(item.assetId);
+    if (asset?.tags.includes('footstep')) return item.attachment !== 'feet';
+    if (asset?.tags.includes('breath'))
+      return item.attachment !== 'chest' && item.attachment !== 'body';
+    return false;
+  });
+  if (attachmentErrors.length)
+    throw new Error(
+      `Decision 2 action attachment violates the authored narrative contract: ${attachmentErrors.map((item) => item.assetId).join(', ')}`,
     );
   const gainErrors = [
     ...(result.patch.upsertAmbient ?? []),

@@ -52,4 +52,26 @@ describe('shared contracts', () => {
       )?.asset_ref,
     ).toBe('forest/action/forest_body_slow_creek_steps_01.wav');
   });
+
+  it('publishes deterministic playback, quality, and session contracts', () => {
+    const byId = new Map(audioLibrary.map((asset) => [asset.asset_id, asset]));
+    expect(
+      byId.get('forest_soft_owl_far_01')?.playback_contract
+        ?.repeat_count_options,
+    ).toEqual([2, 3]);
+    expect(byId.get('forest_bird_far_02')?.session_limits).toMatchObject({
+      max_appearances: 3,
+      min_interval_sec_exclusive: 60,
+    });
+    expect(byId.get('forest_small_animal_rustle_far_01')?.quality_tier).toBe(
+      'limited_use',
+    );
+    expect(
+      byId.get('forest_water_drop_far_01')?.playback_contract
+        ?.resolved_lifecycle_sec,
+    ).toBeCloseTo(16.823);
+    expect(byId.get('body_slow_breath_01')?.asset_ref).toBe(
+      'common/action/body_slow_breath_01.wav',
+    );
+  });
 });

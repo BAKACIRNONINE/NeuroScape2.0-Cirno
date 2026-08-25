@@ -22,6 +22,33 @@ export interface AudioLibraryMotion {
   volume_curve?: string;
 }
 
+export type AudioQualityTier = 'preferred' | 'standard' | 'limited_use';
+export interface AudioSessionLimits {
+  max_appearances: number | null;
+  /** Start-to-start interval; equality is rejected. */
+  min_interval_sec_exclusive: number | null;
+}
+export interface AudioGainProfile {
+  max_safe_gain: number;
+  quality_attenuation: number;
+}
+export interface AudioPlaybackContract {
+  mode: 'single' | 'burst' | 'long_bed' | 'one_shot_envelope';
+  repeat_count_options: number[];
+  inter_repeat_gap_sec: number;
+  envelope_kind:
+    'metadata_fade' | 'proportional_one_shot' | 'burst' | 'crossfade_bed';
+  loop_strategy: 'native_loop' | 'crossfade_repeat' | 'no_loop';
+  loop_crossfade_sec: number;
+  requires_gain_motion: boolean;
+  resolved_lifecycle_sec?: number;
+}
+export interface AudioNarrativeCompatibility {
+  locations: string[];
+  locomotion_states: Array<'stationary' | 'moving'>;
+  requires_related_active_family: string | null;
+}
+
 export interface AudioLibraryAsset {
   asset_id: string;
   label: string;
@@ -49,6 +76,13 @@ export interface AudioLibraryAsset {
   priority: number;
   is_primary_ambient: boolean;
   is_rare_event: boolean;
+  quality_tier?: AudioQualityTier;
+  selection_weight?: number;
+  selection_rank_within_family?: number;
+  session_limits?: AudioSessionLimits;
+  gain_profile?: AudioGainProfile;
+  playback_contract?: AudioPlaybackContract;
+  narrative_compatibility?: AudioNarrativeCompatibility;
 }
 
 /**
