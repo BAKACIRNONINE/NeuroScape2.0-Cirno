@@ -124,6 +124,11 @@ describe('study recorder server', () => {
     };
     await requester({ ...base, stage: 'decision-1' });
     await requester({ ...base, stage: 'decision-2' });
+    await requester({
+      ...base,
+      stage: 'decision-2',
+      reasoningEffort: 'medium',
+    });
     expect(requests[0]).toMatchObject({
       model: 'gpt-5.6',
       reasoning: { effort: 'low', context: 'current_turn' },
@@ -132,9 +137,12 @@ describe('study recorder server', () => {
       text: { format: { type: 'json_schema', strict: true } },
     });
     expect(requests[1]).toMatchObject({
-      reasoning: { effort: 'medium', context: 'current_turn' },
+      reasoning: { effort: 'low', context: 'current_turn' },
       store: false,
       max_output_tokens: 2_000,
+    });
+    expect(requests[2]).toMatchObject({
+      reasoning: { effort: 'medium', context: 'current_turn' },
     });
   });
 

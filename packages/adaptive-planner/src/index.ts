@@ -8,3 +8,6 @@ export * from './interpreter.js';
 export * from './mock-providers.js';
 export * from './plan-merge.js';
 export * from './types.js';
+export * from './base-plan.js';
+export * from './patching.js';
+export * from './reflection.js';

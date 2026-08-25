@@ -10,7 +10,7 @@ import type {
 } from './types.js';
 import { reasoningAttentionState } from './types.js';
 
-export const DECISION_2_PROMPT_VERSION = 'decision-2-audio-library-v4';
+export const DECISION_2_PROMPT_VERSION = 'decision-2-future-patch-v5';
 
 function authoredEventDurationMs(candidate: Decision2Candidate): number {
   return (
@@ -205,19 +205,34 @@ export function buildDecision2Prompt(
     ...(locationNeighbors[currentLocation] ?? []),
   ];
   const payload = {
-    decision,
+    decision1: {
+      intent: decision.intent,
+      salience: decision.salience,
+      scope: decision.scope,
+      constraintsForDecision2: decision.constraintsForDecision2,
+    },
     eegState: reasoningAttentionState(context.state),
     currentScene,
     currentLocation,
     listenerReachableLocations,
     soundSourceLocationIds: Object.keys(locationScene),
-    currentPlan: context.currentPlan,
+    activeRuntimeScene: {
+      journey: context.currentPlan.userJourney,
+      soundscape: context.currentPlan.soundscape,
+    },
+    upcomingBaseHorizon: context.upcomingBaseHorizon ?? [],
+    relevantPriorOutcomes: context.relevantPriorOutcomes?.slice(0, 3) ?? [],
     restrictions: context.restrictions,
-    recentAdaptations: context.history.slice(-6),
+    existingFuturePatches: [],
     candidates,
   };
   return [
     'You are NeuroScape Decision 2: How to Adapt.',
+    'Decision 1 has already decided whether and why to adapt. You must not change its intent, reinterpret EEG, or override the code eligibility gate.',
+    'Produce only a minimal future-facing local patch for the supplied upcoming Base Plan horizon. Past content and the execution freeze buffer are immutable.',
+    'Maintain means the Base Plan continues its scheduled evolution; NO_SAFE_PATCH also safely continues that Base Plan.',
+    'Prefer KEEP, ADJUST, RESCHEDULE, REPLACE, or SUPPRESS before INSERT. Adaptation may simplify the scene and is not synonymous with adding sound.',
+    'Treat every patch as a provisional hypothesis, never a proven intervention. Use only supplied structured prior outcomes and never infer causality from temporal order.',
     'Plan a restrained but perceptibly layered soundscape patch that realizes the supplied Decision 1 intent, salience, scope, and constraintsForDecision2. When appropriate, combine one subtle ambient adjustment with at most one event or body-anchored action.',
     'Apply this goal-to-layer policy whenever restrictions permit and a compatible candidate exists:',
     '- gently-reorient: prioritize one perceptible event. An ambient adjustment may accompany it, but ambient-only changes should not satisfy this goal.',
@@ -372,8 +387,112 @@ export function buildDecision2OutputSchema(
     schema: {
       type: 'object',
       additionalProperties: false,
-      required: ['patch', 'selectedAssetIds', 'rationale'],
+      required: [
+        'status',
+        'intent',
+        'patchOperations',
+        'preservedElementIds',
+        'adaptationHypothesis',
+        'reflectionUsed',
+        'reasonCodes',
+        'patch',
+        'selectedAssetIds',
+        'rationale',
+      ],
       properties: {
+        status: { type: 'string', enum: ['PATCH_PROPOSED', 'NO_SAFE_PATCH'] },
+        intent: {
+          type: 'string',
+          enum: [
+            'gently_reorient_attention',
+            'support_grounding',
+            'reduce_stimulation',
+            'support_sustained_focus',
+            'refresh_engagement',
+            'preserve_recovery',
+          ],
+        },
+        patchOperations: {
+          type: 'array',
+          maxItems: 3,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: [
+              'operation',
+              'targetElementId',
+              'effectiveStartMs',
+              'transitionMs',
+              'replacementAssetId',
+            ],
+            properties: {
+              operation: {
+                type: 'string',
+                enum: [
+                  'KEEP',
+                  'ADJUST',
+                  'RESCHEDULE',
+                  'REPLACE',
+                  'SUPPRESS',
+                  'INSERT',
+                ],
+              },
+              targetElementId: { type: ['string', 'null'] },
+              effectiveStartMs: { type: 'number', minimum: 0 },
+              transitionMs: { type: 'number', minimum: 0, maximum: 30000 },
+              replacementAssetId: {
+                anyOf: [{ type: 'null' }, { type: 'string', enum: assetIds }],
+              },
+            },
+          },
+        },
+        preservedElementIds: { type: 'array', items: { type: 'string' } },
+        adaptationHypothesis: {
+          type: 'object',
+          additionalProperties: false,
+          required: [
+            'mechanismCode',
+            'expectedResponseCode',
+            'failureSignalCode',
+          ],
+          properties: {
+            mechanismCode: { type: 'string' },
+            expectedResponseCode: {
+              type: 'string',
+              enum: [
+                'REDUCE_VARIABILITY_OR_HALT_DECLINE',
+                'PRESERVE_STABILITY',
+                'GENTLE_REORIENTATION',
+              ],
+            },
+            failureSignalCode: {
+              type: 'string',
+              enum: [
+                'CONTINUED_DECLINE_WITH_VALID_SIGNAL',
+                'INCREASED_VARIABILITY',
+                'LOSS_OF_STABILITY',
+              ],
+            },
+          },
+        },
+        reflectionUsed: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['priorAdaptationIds', 'lessonCode', 'lessonConfidence'],
+          properties: {
+            priorAdaptationIds: {
+              type: 'array',
+              maxItems: 3,
+              items: { type: 'string' },
+            },
+            lessonCode: { type: ['string', 'null'] },
+            lessonConfidence: {
+              type: 'string',
+              enum: ['high', 'medium', 'low', 'unavailable'],
+            },
+          },
+        },
+        reasonCodes: { type: 'array', maxItems: 5, items: { type: 'string' } },
         patch: {
           type: 'object',
           additionalProperties: false,
@@ -467,7 +586,31 @@ export function prepareDecision2Input(
     candidates,
     prompt: buildDecision2Prompt(context, decision, currentScene, candidates),
     outputSchema: buildDecision2OutputSchema(candidates, context),
+    reasoningEffort: assessPatchComplexity(context, decision),
   };
+}
+
+export function assessPatchComplexity(
+  context: DecisionContext,
+  decision: AdaptationDecision,
+): 'low' | 'medium' {
+  const priorConflict = (context.relevantPriorOutcomes ?? []).some(
+    (item) =>
+      item.outcome.observedResponse === 'opposed_to_hypothesis' &&
+      item.outcome.confidence !== 'low',
+  );
+  const multipleLayers =
+    new Set((context.upcomingBaseHorizon ?? []).map((item) => item.layer))
+      .size > 1;
+  const phaseBoundary = (context.upcomingBaseHorizon ?? []).some((item) =>
+    context.basePlan?.phases.some((phase) => phase.startMs === item.startMs),
+  );
+  return priorConflict ||
+    multipleLayers ||
+    phaseBoundary ||
+    decision.scope === 'scene-transition'
+    ? 'medium'
+    : 'low';
 }
 
 export function validateDecision2Selection(

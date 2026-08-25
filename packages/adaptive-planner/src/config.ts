@@ -23,6 +23,20 @@ export interface AdaptivePlannerConfig {
   separationRatioMedium: number;
   separationRatioHigh: number;
   maxMeaningfulStasisMs: number;
+  patchHorizonMs: number;
+  executionFreezeBufferMs: number;
+  outcomeObservationWindowMs: number;
+  llmDecision1TimeoutMs: number;
+  llmDecision2TimeoutMs: number;
+  maxPatchOperations: number;
+  maxConcurrentSources: number;
+  maxAmbientLayers: number;
+  maxEventsPerMinute: number;
+  maxBodyAnchorsPerMinute: number;
+  maxSalienceLoad: number;
+  reservedAdaptationHeadroom: number;
+  maxCumulativePatches: number;
+  basePlanMatchTolerance: number;
 }
 
 /**
@@ -55,4 +69,19 @@ export const phase1Config: AdaptivePlannerConfig = Object.freeze({
   separationRatioMedium: 1,
   separationRatioHigh: 2.5,
   maxMeaningfulStasisMs: 160_000,
+  // TBD_PILOT: receding-horizon, latency, and restrained-complexity policy.
+  patchHorizonMs: 120_000,
+  executionFreezeBufferMs: 15_000,
+  outcomeObservationWindowMs: 60_000,
+  llmDecision1TimeoutMs: 15_000,
+  llmDecision2TimeoutMs: 30_000,
+  maxPatchOperations: 3,
+  maxConcurrentSources: 3,
+  maxAmbientLayers: 2,
+  maxEventsPerMinute: 1,
+  maxBodyAnchorsPerMinute: 1,
+  maxSalienceLoad: 1,
+  reservedAdaptationHeadroom: 0.25,
+  maxCumulativePatches: 6,
+  basePlanMatchTolerance: 0.15,
 });

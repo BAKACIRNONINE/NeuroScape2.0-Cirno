@@ -21,7 +21,6 @@ import {
   longIntegrationHarness,
   spatialDiagnosticHarness,
 } from '../integration/IntegrationHarness.js';
-import { FixedAudioSessionPage } from '../ui/pages/FixedAudioSessionPage.js';
 import { adaptiveIntegrationHarness } from '../integration/AdaptiveIntegrationHarness.js';
 import { audioEngine } from '../audio/AudioEngine.js';
 import {
@@ -38,6 +37,10 @@ import {
   toPlannerCalibrationProfile,
 } from '../calibration/integration.js';
 import type { Profile } from '../calibration/types.js';
+import {
+  assignMatchedBasePlans,
+  BASE_PLAN_VERSION,
+} from '@neuroscape/adaptive-planner';
 
 type Page =
   'home' | 'calibration' | 'loading' | 'preview' | 'session' | 'summary';
@@ -73,7 +76,10 @@ export function App() {
     try {
       await audioEngine.playOpening();
     } catch (error) {
-      console.error('Meditation opening unavailable; session will continue.', error);
+      console.error(
+        'Meditation opening unavailable; session will continue.',
+        error,
+      );
     }
   };
   const sessionStatus = useStore(
@@ -118,7 +124,8 @@ export function App() {
         try {
           rawEeg = (await rawEegSource.current?.rawCsv()) ?? null;
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message =
+            error instanceof Error ? error.message : String(error);
           finalizationErrors.push(`Raw EEG finalization failed: ${message}`);
           console.error('Raw EEG finalization failed.', error);
         }
@@ -178,6 +185,7 @@ export function App() {
     setPage('session');
   };
   const startAdaptive = async (intent: AdaptiveSessionIntent) => {
+    const assignment = assignMatchedBasePlans(intent.participantId);
     setRealTimeRestartEnabled(false);
     if (intent.plannerMode === 'openai') {
       try {
@@ -210,16 +218,25 @@ export function App() {
       userPrompt: `10-minute Module 01/02 adaptive replay · ${intent.plannerMode}`,
       eegMode: 'recorded',
       startedAtIso: new Date().toISOString(),
+      basePlanId: assignment.adaptiveBasePlanId,
+      pairedBasePlanId: assignment.nonAdaptiveBasePlanId,
+      basePlanVersion: BASE_PLAN_VERSION,
+      basePlanProfileId: 'forest_restrained_v1',
+      assignmentRuleVersion: assignment.assignmentRuleVersion,
+      conditionOrder: assignment.conditionOrder,
+      basePlanExecutionMode: 'structured-runtime',
     });
     adaptiveIntegrationHarness.start({
       sessionId,
       runMode: intent.runMode,
       plannerMode: intent.plannerMode,
+      participantId: intent.participantId,
     });
     setPage('session');
     void startAdaptiveAudio();
   };
   const startCalibratedAdaptive = async (profile: Profile) => {
+    const assignment = assignMatchedBasePlans(profile.participant_id);
     try {
       const response = await fetch('/api/llm/health');
       const health = (await response.json()) as { configured?: boolean };
@@ -246,6 +263,13 @@ export function App() {
         eegMode: 'muse',
         startedAtIso: new Date().toISOString(),
         calibrationProfile: plannerProfile,
+        basePlanId: assignment.adaptiveBasePlanId,
+        pairedBasePlanId: assignment.nonAdaptiveBasePlanId,
+        basePlanVersion: BASE_PLAN_VERSION,
+        basePlanProfileId: 'forest_restrained_v1',
+        assignmentRuleVersion: assignment.assignmentRuleVersion,
+        conditionOrder: assignment.conditionOrder,
+        basePlanExecutionMode: 'structured-runtime',
       });
       adaptiveIntegrationHarness.start({
         sessionId,
@@ -254,6 +278,7 @@ export function App() {
         sessionDurationMs: 10 * 60_000,
         calibrationProfile: plannerProfile,
         epochSource,
+        participantId: profile.participant_id,
       });
       setPage('session');
       void startAdaptiveAudio();
@@ -289,6 +314,7 @@ export function App() {
     setPage('session');
   };
   const startNonAdaptive = async (participantId: string) => {
+    const assignment = assignMatchedBasePlans(participantId);
     try {
       const recorder = new LiveRawEegRecorder();
       await recorder.start();
@@ -313,18 +339,23 @@ export function App() {
       userPrompt:
         'Approved fixed 10-minute non-adaptive trajectory; Muse EEG is recorded for analysis but is not used for adaptation',
       startedAtIso: new Date().toISOString(),
-      controlAudioId: 'non-adaptive-10min-v1',
-      controlTrajectoryId: 'non-adaptive-trajectory-approved-v1',
+      basePlanId: assignment.nonAdaptiveBasePlanId,
+      pairedBasePlanId: assignment.adaptiveBasePlanId,
+      basePlanVersion: BASE_PLAN_VERSION,
+      basePlanProfileId: 'forest_restrained_v1',
+      assignmentRuleVersion: assignment.assignmentRuleVersion,
+      conditionOrder: assignment.conditionOrder,
+      basePlanExecutionMode: 'structured-runtime',
     });
-    runtimeStore
-      .getState()
-      .setSessionRuntime({
-        status: 'running',
-        elapsedTimeMs: 0,
-        plannerStatus: 'ready',
-        message: 'Playing shared pre-rendered non-adaptive control audio',
-      });
+    adaptiveIntegrationHarness.start({
+      sessionId,
+      runMode: 'study-realtime',
+      plannerMode: 'mock',
+      participantId,
+      condition: 'non-adaptive',
+    });
     setPage('session');
+    void startAdaptiveAudio();
   };
   if (page === 'home')
     return (
@@ -379,12 +410,11 @@ export function App() {
     if (sessionStatus === 'ended' || !sessionRecorder.active) setPage('home');
     else {
       returnHomeAfterFinalize.current = true;
-      if (mode === 'adaptive') adaptiveIntegrationHarness.end();
+      if (mode === 'adaptive' || mode === 'non-adaptive')
+        adaptiveIntegrationHarness.end();
       else runtimeStore.getState().setSessionRuntime({ status: 'ended' });
     }
   };
-  if (mode === 'non-adaptive')
-    return <FixedAudioSessionPage onHome={returnFromSession} />;
   return (
     <SessionPage
       mode={mode}

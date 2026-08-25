@@ -129,6 +129,8 @@ export function buildDecision1Prompt(context: DecisionContext): string {
     'Low-confidence or unusable EEG cannot support a corrective claim. It may only support conservative history-driven evolution or maintain.',
     'If decision=maintain, intent must be maintain or preserve_recovery, scope must be maintain, and maintain_reason must be concrete.',
     'If decision=adapt, intent and scope must not be maintain. Pass salience and constraints_for_decision_2 without selecting assets.',
+    'Maintain means preserving the currently scheduled Base Plan evolution; it never means freezing the current soundscape or cancelling scheduled future events.',
+    'Use supplied prior outcomes only as non-causal, provisional observations. If the last applied patch is not yet observable, avoid stacking another intervention unless clearly necessary.',
     'Provide a concise, inspectable rationale based only on supplied observations. Do not claim objective mind-wandering detection and do not expose hidden chain-of-thought.',
     `INPUT_JSON=${JSON.stringify({
       eegState: reasoningAttentionState(context.state),
@@ -140,6 +142,7 @@ export function buildDecision1Prompt(context: DecisionContext): string {
         context.secondsSinceLastMeaningfulChange,
       stasisPressure: context.stasisPressure,
       transitionInProgress: context.transitionInProgress,
+      relevantPriorOutcomes: context.relevantPriorOutcomes?.slice(0, 3) ?? [],
     })}`,
   ].join('\n');
 }
@@ -301,6 +304,24 @@ export class OpenAIDecisionProvider implements DecisionProvider {
 }
 
 interface Decision2WireOutput {
+  status: 'PATCH_PROPOSED' | 'NO_SAFE_PATCH';
+  intent: AdaptationDecision['intent'];
+  patchOperations: Array<{
+    operation:
+      'KEEP' | 'ADJUST' | 'RESCHEDULE' | 'REPLACE' | 'SUPPRESS' | 'INSERT';
+    targetElementId: string | null;
+    effectiveStartMs: number;
+    transitionMs: number;
+    replacementAssetId: string | null;
+  }>;
+  preservedElementIds: string[];
+  adaptationHypothesis: Record<string, string>;
+  reflectionUsed: {
+    priorAdaptationIds: string[];
+    lessonCode: string | null;
+    lessonConfidence: 'high' | 'medium' | 'low' | 'unavailable';
+  };
+  reasonCodes: string[];
   patch: SoundscapePlanPatch & {
     journey?: SoundscapePlanPatch['journey'] | null;
   };
@@ -334,7 +355,7 @@ export class OpenAIPlanningProvider implements PlanningProvider {
 
   async plan(
     _context: DecisionContext,
-    _decision: AdaptationDecision,
+    decision: AdaptationDecision,
     input: Decision2Input,
   ): Promise<PlanningResult> {
     const response = await requestStructuredOutput<Decision2WireOutput>(
@@ -343,9 +364,12 @@ export class OpenAIPlanningProvider implements PlanningProvider {
         promptVersion: input.promptVersion,
         prompt: input.prompt,
         outputSchema: input.outputSchema,
+        reasoningEffort: input.reasoningEffort,
       },
       this.#options,
     );
+    if (response.output.intent !== decision.intent)
+      throw new Error('Decision 2 attempted to change Decision 1 intent.');
     return {
       patch: normalizePatch(response.output.patch),
       selectedAssetIds: response.output.selectedAssetIds,

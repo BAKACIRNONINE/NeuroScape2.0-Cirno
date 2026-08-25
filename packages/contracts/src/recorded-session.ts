@@ -19,6 +19,14 @@ export interface RecordedSessionMetadata {
   startedAtIso?: string;
   controlAudioId?: string;
   controlTrajectoryId?: string;
+  basePlanId?: string;
+  basePlanVersion?: string;
+  basePlanProfileId?: string;
+  assignmentRuleVersion?: string;
+  conditionOrder?: ('non_adaptive' | 'adaptive')[];
+  pairedBasePlanId?: string;
+  basePlanExecutionMode?:
+    'structured-runtime' | 'prerendered-compatible-fallback';
 }
 export interface RecordedCalibrationProfile {
   profileId: string;
@@ -43,7 +51,10 @@ export interface AdaptiveTraceRecord {
     | 'decision-2'
     | 'llm-error'
     | 'plan-error'
-    | 'plan-applied';
+    | 'plan-applied'
+    | 'base-plan'
+    | 'patch-lifecycle'
+    | 'reflection-outcome';
   source: 'deterministic' | 'live-eeg' | 'mock-llm' | 'openai';
   summary: string;
   data: Record<string, unknown>;

@@ -70,6 +70,7 @@ export function createOpenAIRequester(options = {}) {
     prompt,
     promptVersion,
     outputSchema,
+    reasoningEffort: requestedReasoningEffort,
   }) {
     if (!apiKey)
       throw new Error(
@@ -82,7 +83,21 @@ export function createOpenAIRequester(options = {}) {
         : process.env.OPENAI_DECISION_2_MODEL) ??
       process.env.OPENAI_MODEL ??
       'gpt-5.6';
-    const reasoningEffort = decisionOne ? 'low' : 'medium';
+    const reasoningEffort = decisionOne
+      ? 'low'
+      : requestedReasoningEffort === 'medium'
+        ? 'medium'
+        : 'low';
+    const timeoutMs = Number(
+      decisionOne
+        ? (process.env.OPENAI_DECISION_1_TIMEOUT_MS ?? 15_000)
+        : (process.env.OPENAI_DECISION_2_TIMEOUT_MS ?? 30_000),
+    );
+    const maxOutputTokens = Number(
+      decisionOne
+        ? (process.env.OPENAI_DECISION_1_MAX_OUTPUT_TOKENS ?? 900)
+        : (process.env.OPENAI_DECISION_2_MAX_OUTPUT_TOKENS ?? 2_000),
+    );
     const response = await fetchImpl(OPENAI_RESPONSES_URL, {
       method: 'POST',
       headers: {
@@ -96,14 +111,14 @@ export function createOpenAIRequester(options = {}) {
         text: {
           format: { type: 'json_schema', ...outputSchema },
         },
-        max_output_tokens: decisionOne ? 900 : 2_000,
+        max_output_tokens: maxOutputTokens,
         store: false,
         metadata: {
           neuroscape_stage: stage,
           prompt_version: promptVersion,
         },
       }),
-      signal: AbortSignal.timeout(decisionOne ? 60_000 : 120_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(errorMessage(payload, response.status));

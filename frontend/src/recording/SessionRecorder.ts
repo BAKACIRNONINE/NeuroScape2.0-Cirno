@@ -22,6 +22,14 @@ export interface RecordingStartOptions {
   startedAtIso?: string;
   controlAudioId?: string;
   controlTrajectoryId?: string;
+  basePlanId?: string;
+  basePlanVersion?: string;
+  basePlanProfileId?: string;
+  assignmentRuleVersion?: string;
+  conditionOrder?: ('non_adaptive' | 'adaptive')[];
+  pairedBasePlanId?: string;
+  basePlanExecutionMode?:
+    'structured-runtime' | 'prerendered-compatible-fallback';
   calibrationProfile?: RecordedCalibrationProfile;
 }
 export class SessionRecorder {
@@ -53,6 +61,13 @@ export class SessionRecorder {
         startedAtIso: options.startedAtIso,
         controlAudioId: options.controlAudioId,
         controlTrajectoryId: options.controlTrajectoryId,
+        basePlanId: options.basePlanId,
+        basePlanVersion: options.basePlanVersion,
+        basePlanProfileId: options.basePlanProfileId,
+        assignmentRuleVersion: options.assignmentRuleVersion,
+        conditionOrder: options.conditionOrder,
+        pairedBasePlanId: options.pairedBasePlanId,
+        basePlanExecutionMode: options.basePlanExecutionMode,
       },
       calibrationProfile: options.calibrationProfile
         ? structuredClone(options.calibrationProfile)

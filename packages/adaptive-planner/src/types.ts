@@ -5,6 +5,17 @@ import type {
   SceneJourneyPlan,
   UserJourneyPlan,
 } from '@neuroscape/contracts';
+import type { BaseScenePlan } from './base-plan.js';
+import type {
+  ComplexityProjection,
+  FutureScenePatch,
+  PatchValidationResult,
+} from './patching.js';
+import type {
+  AdaptationLifecycle,
+  AdaptationMemoryCase,
+  AdaptationOutcome,
+} from './reflection.js';
 
 export type SessionPhase = 'opening' | 'adaptive' | 'closing';
 export type AttentionLabel =
@@ -133,6 +144,10 @@ export interface DecisionContext {
   secondsSinceLastMeaningfulChange: number;
   stasisPressure: boolean;
   transitionInProgress: boolean;
+  basePlan?: BaseScenePlan;
+  upcomingBaseHorizon?: BaseScenePlan['scheduledElements'];
+  relevantPriorOutcomes?: AdaptationMemoryCase[];
+  complexityHeadroom?: ComplexityProjection;
 }
 
 export type AdaptationIntent =
@@ -199,6 +214,7 @@ export interface PlanningResult {
   model?: string;
   responseId?: string;
   usage?: LlmUsage;
+  normalizedFuturePatch?: FutureScenePatch;
 }
 
 export interface Decision2Candidate {
@@ -239,6 +255,7 @@ export interface Decision2Input {
   outputSchema: Record<string, unknown>;
   currentScene: string;
   candidates: Decision2Candidate[];
+  reasoningEffort: 'low' | 'medium';
 }
 
 export interface DecisionProvider {
@@ -259,4 +276,8 @@ export interface AdaptiveCheckpointResult {
   decision?: AdaptationDecision;
   planning?: PlanningResult;
   plan?: SceneJourneyPlan;
+  futurePatch?: FutureScenePatch;
+  patchValidation?: PatchValidationResult;
+  lifecycle?: AdaptationLifecycle;
+  outcome?: AdaptationOutcome;
 }

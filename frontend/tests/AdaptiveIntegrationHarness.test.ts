@@ -94,4 +94,38 @@ describe('Phase 1 adaptive end-to-end harness', () => {
       ),
     ).toBe(true);
   });
+
+  it('runs the assigned Non-Adaptive Base Plan without Decision 1/2 or freezing its scheduled timeline', async () => {
+    const harness = new AdaptiveIntegrationHarness(runtimeStore, {
+      set: () => 1,
+      clear: () => undefined,
+    });
+    recordingStore.start({
+      sessionId: 'non-adaptive-base-plan',
+      participantId: 'P002',
+      runMode: 'non-adaptive',
+      plannerMode: 'fixed',
+      eegMode: 'muse',
+    });
+    harness.start({
+      sessionId: 'non-adaptive-base-plan',
+      participantId: 'P002',
+      condition: 'non-adaptive',
+      runMode: 'study-realtime',
+      plannerMode: 'mock',
+    });
+    for (let tick = 0; tick < 600; tick += 1) await harness.tick(1_000);
+    const recording = recordingStore.stop();
+    expect(recording?.sceneJourneyPlans).toHaveLength(1);
+    expect(recording?.sceneJourneyPlans[0]?.value.planningHorizonSec).toBe(600);
+    expect(
+      recording?.sceneJourneyPlans[0]?.value.soundscape.event.length,
+    ).toBeGreaterThan(0);
+    expect(
+      recording?.adaptiveTrace.some(
+        (entry) => entry.kind === 'decision-1' || entry.kind === 'decision-2',
+      ),
+    ).toBe(false);
+    expect(recording?.runtimeSnapshots.at(-1)?.timestampMs).toBe(600_000);
+  });
 });

@@ -111,7 +111,8 @@ export function createStudyServer(options = {}) {
             process.env.OPENAI_DECISION_2_MODEL ??
             process.env.OPENAI_MODEL ??
             'gpt-5.6',
-          reasoningEffort: 'medium',
+          reasoningEffort: 'low',
+          escalatedReasoningEffort: 'medium',
         },
         store: false,
       });
@@ -139,6 +140,7 @@ export function createStudyServer(options = {}) {
           prompt: payload.prompt,
           promptVersion: payload.promptVersion,
           outputSchema: payload.outputSchema,
+          reasoningEffort: payload.reasoningEffort,
         });
         json(response, 200, result);
         return;

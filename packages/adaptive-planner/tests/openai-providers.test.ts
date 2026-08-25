@@ -147,6 +147,29 @@ describe('OpenAI planner providers', () => {
     const provider = new OpenAIPlanningProvider({
       fetchImpl: async () =>
         jsonResponse({
+          status: 'PATCH_PROPOSED',
+          intent: decision.intent,
+          patchOperations: [
+            {
+              operation: 'INSERT',
+              targetElementId: null,
+              effectiveStartMs: 182_000,
+              transitionMs: 2_000,
+              replacementAssetId: candidate.assetId,
+            },
+          ],
+          preservedElementIds: [],
+          adaptationHypothesis: {
+            mechanismCode: 'GENTLE_REORIENTATION',
+            expectedResponseCode: 'GENTLE_REORIENTATION',
+            failureSignalCode: 'CONTINUED_DECLINE_WITH_VALID_SIGNAL',
+          },
+          reflectionUsed: {
+            priorAdaptationIds: [],
+            lessonCode: null,
+            lessonConfidence: 'unavailable',
+          },
+          reasonCodes: ['MINIMAL_SUFFICIENT_PATCH'],
           patch: {
             reasoningSummary: 'Use one compatible event.',
             journey: null,

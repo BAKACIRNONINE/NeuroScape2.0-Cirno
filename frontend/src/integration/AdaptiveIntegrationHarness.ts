@@ -5,7 +5,9 @@ import {
   OpenAIDecisionProvider,
   OpenAIPlanningProvider,
   createMockTbrReplay,
-  initialForestPlan,
+  createMatchedForestBasePlans,
+  assignMatchedBasePlans,
+  materializeBasePlan,
   mockCalibrationProfile,
   phase1Config,
   type AdaptiveCheckpointResult,
@@ -55,6 +57,8 @@ export interface AdaptiveHarnessStartOptions {
   calibrationProfile?: CalibrationProfile;
   epochSource?: AdaptiveEpochSource;
   sessionDurationMs?: number;
+  participantId?: string;
+  condition?: 'adaptive' | 'non-adaptive';
 }
 export interface AdaptiveEpochSource {
   next(): Promise<TbrEpoch | null>;
@@ -75,6 +79,7 @@ export class AdaptiveIntegrationHarness {
   #sessionId = 'adaptive-mock-session';
   #runMode: AdaptiveRunMode = 'mock-fast';
   #plannerMode: 'openai' | 'mock' = 'openai';
+  #condition: 'adaptive' | 'non-adaptive' = 'adaptive';
   #runtime: RuntimeController | null = null;
   #planner: AdaptivePlannerEngine | null = null;
   #timer: unknown;
@@ -108,26 +113,40 @@ export class AdaptiveIntegrationHarness {
     this.#sessionId = options.sessionId ?? 'adaptive-mock-session';
     this.#runMode = options.runMode ?? 'mock-fast';
     this.#plannerMode = options.plannerMode ?? 'openai';
+    this.#condition = options.condition ?? 'adaptive';
     this.#epochSource = options.epochSource ?? null;
     this.#sessionDurationMs =
       options.sessionDurationMs ?? phase1Config.sessionDurationMs;
     this.#store.getState().resetSessionStreams();
     runtimeDiagnostics.reset();
     this.#runtime = this.createRuntime();
-    this.#planner = new AdaptivePlannerEngine({
-      config: phase1Config,
-      profile: options.calibrationProfile ?? mockCalibrationProfile,
-      initialPlan: initialForestPlan,
-      decisionProvider:
-        this.#plannerMode === 'openai'
-          ? new OpenAIDecisionProvider({ sessionId: this.#sessionId })
-          : new MockDecisionProvider(),
-      planningProvider:
-        this.#plannerMode === 'openai'
-          ? new OpenAIPlanningProvider({ sessionId: this.#sessionId })
-          : new MockPlanningProvider(),
-    });
-    this.#runtime.initialize(initialForestPlan);
+    const assignment = assignMatchedBasePlans(options.participantId ?? 'P001');
+    const assignedPlanId =
+      this.#condition === 'adaptive'
+        ? assignment.adaptiveBasePlanId
+        : assignment.nonAdaptiveBasePlanId;
+    const basePlan = createMatchedForestBasePlans(phase1Config).find(
+      (plan) => plan.planId === assignedPlanId,
+    )!;
+    const initialPlan = materializeBasePlan(basePlan);
+    this.#planner =
+      this.#condition === 'adaptive'
+        ? new AdaptivePlannerEngine({
+            config: phase1Config,
+            profile: options.calibrationProfile ?? mockCalibrationProfile,
+            initialPlan,
+            basePlan,
+            decisionProvider:
+              this.#plannerMode === 'openai'
+                ? new OpenAIDecisionProvider({ sessionId: this.#sessionId })
+                : new MockDecisionProvider(),
+            planningProvider:
+              this.#plannerMode === 'openai'
+                ? new OpenAIPlanningProvider({ sessionId: this.#sessionId })
+                : new MockPlanningProvider(),
+          })
+        : null;
+    this.#runtime.initialize(initialPlan);
     this.#epochIndex = 0;
     this.#state = {
       status: 'running',
@@ -137,9 +156,18 @@ export class AdaptiveIntegrationHarness {
     };
     this.dispatch('PlannerStatus', 0, {
       status: 'ready',
-      message: `Module 01/02 ${this.#plannerMode === 'openai' ? 'OpenAI GPT-5.6' : 'mock'} providers ready · opening phase`,
+      message:
+        this.#condition === 'adaptive'
+          ? `Module 01/02 ${this.#plannerMode === 'openai' ? 'OpenAI GPT-5.6' : 'mock'} providers ready · opening phase`
+          : `Non-Adaptive ${basePlan.planId} ready · EEG cannot alter playback`,
     });
-    this.dispatch('SceneJourneyPlan', 0, initialForestPlan);
+    this.trace(0, 'base-plan', 'deterministic', `Loaded ${basePlan.planId}`, {
+      basePlanId: basePlan.planId,
+      basePlanVersion: basePlan.version,
+      profileId: basePlan.profile.profileId,
+      assignment,
+    });
+    this.dispatch('SceneJourneyPlan', 0, initialPlan);
     this.dispatch('RuntimeWorldState', 0, this.#runtime.currentState!);
     this.dispatch('SessionStatus', 0, {
       status: 'running',
@@ -192,12 +220,7 @@ export class AdaptiveIntegrationHarness {
   }
 
   async tick(deltaTimeMs = 1_000): Promise<void> {
-    if (
-      this.#busy ||
-      !this.#runtime ||
-      !this.#planner ||
-      this.#state.status !== 'running'
-    )
+    if (this.#busy || !this.#runtime || this.#state.status !== 'running')
       return;
     this.#busy = true;
     try {
@@ -217,6 +240,7 @@ export class AdaptiveIntegrationHarness {
           epochs.push(this.#replay[this.#epochIndex++]!);
       }
       for (const epoch of epochs) {
+        if (!this.#planner) continue;
         this.trace(
           epoch.timestampMs,
           'eeg-epoch',
@@ -224,49 +248,8 @@ export class AdaptiveIntegrationHarness {
           `${this.#epochSource ? 'Live Muse' : 'Mock'} log-TBR epoch ${epoch.valid ? 'accepted' : 'rejected'}`,
           epoch,
         );
-        let result: AdaptiveCheckpointResult | null = null;
-        try {
-          result = await this.#planner.ingest(epoch);
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          this.trace(
-            epoch.timestampMs,
-            'llm-error',
-            this.#plannerMode === 'openai' ? 'openai' : 'mock-llm',
-            message,
-            { message, plannerMode: this.#plannerMode },
-          );
-          this.dispatch('PlannerStatus', epoch.timestampMs, {
-            status: 'error',
-            message: `Planner error; maintaining the current soundscape. ${message}`,
-          });
-        }
-        const state = result?.state ?? this.#planner.attentionStates.at(-1)!;
-        this.dispatch(
-          'NeuroState',
-          epoch.timestampMs,
-          this.toProtocolNeuroState(state),
-        );
-        if (result) {
-          try {
-            this.handleCheckpoint(result);
-          } catch (error) {
-            const message =
-              error instanceof Error ? error.message : String(error);
-            this.trace(
-              result.state.timestampMs,
-              'plan-error',
-              'deterministic',
-              `Plan application failed: ${message}`,
-              { message, planId: result.plan?.planId },
-            );
-            this.dispatch('PlannerStatus', result.state.timestampMs, {
-              status: 'error',
-              message: `Plan rejected; maintaining the current soundscape. ${message}`,
-            });
-          }
-        }
+        if (this.#plannerMode === 'openai') void this.processEpoch(epoch);
+        else await this.processEpoch(epoch);
       }
       const startedAt = performance.now();
       const snapshot = this.#runtime.update(
@@ -289,6 +272,67 @@ export class AdaptiveIntegrationHarness {
     }
   }
 
+  private async processEpoch(epoch: TbrEpoch): Promise<void> {
+    const planner = this.#planner;
+    if (!planner || this.#state.status !== 'running') return;
+    let result: AdaptiveCheckpointResult | null = null;
+    try {
+      result = await planner.ingest(epoch);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.trace(
+        epoch.timestampMs,
+        'llm-error',
+        this.#plannerMode === 'openai' ? 'openai' : 'mock-llm',
+        message,
+        {
+          message,
+          plannerMode: this.#plannerMode,
+          fallback: 'continue_base_plan',
+        },
+      );
+      this.dispatch('PlannerStatus', epoch.timestampMs, {
+        status: 'error',
+        message: `Planner error; Base Plan playback continues. ${message}`,
+      });
+    }
+    if (planner !== this.#planner || this.#state.status !== 'running') return;
+    const state = result?.state ?? planner.attentionStates.at(-1);
+    if (state)
+      this.dispatch(
+        'NeuroState',
+        epoch.timestampMs,
+        this.toProtocolNeuroState(state),
+      );
+    if (!result) return;
+    try {
+      this.handleCheckpoint(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (result.futurePatch)
+        planner.acknowledgeApplication(
+          result.futurePatch.adaptationId,
+          'FAILED',
+          result.state.timestampMs,
+        );
+      this.trace(
+        result.state.timestampMs,
+        'plan-error',
+        'deterministic',
+        `Plan application failed: ${message}`,
+        {
+          message,
+          planId: result.plan?.planId,
+          fallback: 'continue_base_plan',
+        },
+      );
+      this.dispatch('PlannerStatus', result.state.timestampMs, {
+        status: 'error',
+        message: `Plan rejected; Base Plan playback continues. ${message}`,
+      });
+    }
+  }
+
   private handleCheckpoint(result: AdaptiveCheckpointResult): void {
     this.#state = {
       ...this.#state,
@@ -301,6 +345,15 @@ export class AdaptiveIntegrationHarness {
       `${result.state.label}; trend ${result.state.trend}`,
       result.state,
     );
+    if (result.outcome) {
+      this.trace(
+        result.state.timestampMs,
+        'reflection-outcome',
+        'deterministic',
+        `${result.outcome.adaptationId}: ${result.outcome.observedResponse}`,
+        result.outcome,
+      );
+    }
     this.trace(
       result.state.timestampMs,
       'eligibility',
@@ -339,6 +392,24 @@ export class AdaptiveIntegrationHarness {
         result.planning,
       );
       this.#runtime.applyPlan(result.plan);
+      if (result.futurePatch) {
+        this.#planner?.acknowledgeApplication(
+          result.futurePatch.adaptationId,
+          'APPLIED',
+          result.state.timestampMs,
+        );
+        this.trace(
+          result.state.timestampMs,
+          'patch-lifecycle',
+          'deterministic',
+          `${result.futurePatch.adaptationId} applied`,
+          {
+            patch: result.futurePatch,
+            validation: result.patchValidation,
+            lifecycle: result.lifecycle,
+          },
+        );
+      }
       this.dispatch('SceneJourneyPlan', result.state.timestampMs, result.plan);
       this.trace(
         result.state.timestampMs,
