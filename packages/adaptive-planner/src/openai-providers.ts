@@ -12,7 +12,7 @@ import type {
 } from './types.js';
 import { reasoningAttentionState } from './types.js';
 
-export const DECISION_1_PROMPT_VERSION = 'decision-1-reference-unbounded-v3';
+export const DECISION_1_PROMPT_VERSION = 'decision-1-reference-unbounded-v5';
 
 const scopes: readonly AdaptationScope[] = [
   'maintain',
@@ -127,6 +127,9 @@ export function buildDecision1Prompt(context: DecisionContext): string {
     'Opening and closing phase restrictions are authoritative. Never request a forbidden event, body anchor, or scene transition.',
     'When stasisPressure is true, do not maintain indefinitely merely because evidence is focus-leaning; prefer minimal support_sustained_focus or refresh_engagement unless continuity constraints justify maintain.',
     'Low-confidence or unusable EEG cannot support a corrective claim. It may only support conservative history-driven evolution or maintain.',
+    'When calibrationQuality is low or unusable, prioritize the system-observable soundscape hierarchy and asset quality over EEG-directed correction: preserve one stable primary ambient foundation, avoid competing ambient layers, keep action/event cues sparse and subordinate, and request only minimal quality-improving or continuity-preserving evolution.',
+    'Under that low-calibration fallback, do not adapt merely to create activity. Prefer maintain when the current layer hierarchy is coherent; adapt conservatively only when stasis pressure, a missing sound role, excessive density, repetition, or a clearly better-quality compatible layer justifies it.',
+    'adaptationProgress is a soft session-level target, never permission to violate safety or invent an EEG claim. When behindPace is true and a safe minimal system-sound evolution exists, prefer that evolution over repeated maintain; when no safe useful change exists, maintain remains valid.',
     'If decision=maintain, intent must be maintain or preserve_recovery, scope must be maintain, and maintain_reason must be concrete.',
     'If decision=adapt, intent and scope must not be maintain. Pass salience and constraints_for_decision_2 without selecting assets.',
     'Maintain means preserving the currently scheduled Base Plan evolution; it never means freezing the current soundscape or cancelling scheduled future events.',
@@ -159,6 +162,7 @@ export function buildDecision1Prompt(context: DecisionContext): string {
         context.secondsSinceLastMeaningfulChange,
       stasisPressure: context.stasisPressure,
       transitionInProgress: context.transitionInProgress,
+      adaptationProgress: context.adaptationProgress,
       relevantPriorOutcomes: context.relevantPriorOutcomes?.slice(0, 3) ?? [],
     })}`,
   ].join('\n');

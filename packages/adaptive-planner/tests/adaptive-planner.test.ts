@@ -86,6 +86,50 @@ describe('adaptive planner Phase 1', () => {
     expect(planningCalls).toBe(0);
   });
 
+  it('does not let a later checkpoint invalidate an in-flight planner transaction', async () => {
+    let releaseDecision!: (value: unknown) => void;
+    const decision = new Promise((resolve) => {
+      releaseDecision = resolve;
+    });
+    let calls = 0;
+    const planner = new AdaptivePlannerEngine({
+      config: phase1Config,
+      profile: mockCalibrationProfile,
+      initialPlan: initialForestPlan,
+      decisionProvider: {
+        decide: async () => {
+          calls += 1;
+          return decision as never;
+        },
+      },
+      planningProvider: new MockPlanningProvider(),
+    });
+    const replay = createMockTbrReplay();
+    for (const epoch of replay.filter((item) => item.timestampMs < 60_000))
+      await planner.ingest(epoch);
+    const first = planner.ingest(
+      replay.find((item) => item.timestampMs === 60_000)!,
+    );
+    let busyResult;
+    for (const epoch of replay.filter(
+      (item) => item.timestampMs > 60_000 && item.timestampMs <= 100_000,
+    ))
+      busyResult = await planner.ingest(epoch);
+    expect(busyResult?.eligibility).toMatchObject({
+      eligible: false,
+      reasons: ['planner_request_in_progress'],
+    });
+    expect(calls).toBe(1);
+    releaseDecision({
+      shouldAdapt: false,
+      goal: 'maintain',
+      scope: 'maintain',
+      rationale: 'complete first transaction',
+      provider: 'test',
+    });
+    await first;
+  });
+
   it('removes schema-required null locations from global ambient patches', () => {
     const patch = {
       reasoningSummary: 'Replace the global forest bed.',

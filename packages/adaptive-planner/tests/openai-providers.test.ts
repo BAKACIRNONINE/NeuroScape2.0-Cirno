@@ -117,6 +117,12 @@ describe('OpenAI planner providers', () => {
     expect(String(requestBody?.prompt)).toContain(
       'Sustained focus does not automatically require maintain',
     );
+    expect(String(requestBody?.prompt)).toContain(
+      'prioritize the system-observable soundscape hierarchy and asset quality',
+    );
+    expect(String(requestBody?.prompt)).toContain(
+      'adaptationProgress is a soft session-level target',
+    );
     expect(result.provider).toBe('openai-responses');
     expect(result.model).toBe('gpt-5.6-2026-08-01');
     expect(result.usage?.totalTokens).toBe(120);
@@ -143,6 +149,15 @@ describe('OpenAI planner providers', () => {
       provider: 'test',
     };
     const input = prepareDecision2Input(value, decision, phase1Config);
+    expect(input.prompt).toContain(
+      'rank compatible candidates by authored quality and system suitability',
+    );
+    expect(input.prompt).toContain('"active":false');
+    value.state.calibrationQuality = 'low';
+    value.state.measurementConfidence = 'low';
+    expect(prepareDecision2Input(value, decision, phase1Config).prompt).toContain(
+      '"active":true',
+    );
     const candidate = input.candidates[0]!;
     const provider = new OpenAIPlanningProvider({
       fetchImpl: async () =>

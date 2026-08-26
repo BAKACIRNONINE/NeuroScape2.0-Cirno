@@ -73,3 +73,15 @@ def test_buffered_writer_shutdown_flush(tmp_path: Path):
         rows = list(csv.DictReader(handle))
     assert len(rows) == 1
     assert rows[0]["af7"] == "2.0"
+
+
+def test_buffered_writer_sanitizes_non_finite_osc_without_stopping(tmp_path: Path):
+    store = SessionStore(tmp_path)
+    metadata = store.create("P3", "127.0.0.1")
+    store.writer.put_osc({"arguments": [1.0, float("nan"), float("inf")]})
+    store.writer.put_osc({"arguments": [2.0], "after_bad_packet": True})
+    store.close()
+    path = tmp_path / metadata["session_id"] / "raw_osc.jsonl"
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert records[0]["arguments"] == [1.0, None, None]
+    assert records[1]["after_bad_packet"] is True

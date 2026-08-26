@@ -90,8 +90,8 @@ export function createOpenAIRequester(options = {}) {
         : 'low';
     const timeoutMs = Number(
       decisionOne
-        ? (process.env.OPENAI_DECISION_1_TIMEOUT_MS ?? 12_000)
-        : (process.env.OPENAI_DECISION_2_TIMEOUT_MS ?? 12_000),
+        ? (process.env.OPENAI_DECISION_1_TIMEOUT_MS ?? 60_000)
+        : (process.env.OPENAI_DECISION_2_TIMEOUT_MS ?? 120_000),
     );
     const maxOutputTokens = Number(
       decisionOne

@@ -1,6 +1,7 @@
 import type { RuntimeWorldState } from '@neuroscape/contracts';
 import * as THREE from 'three';
 import { ActionRenderer } from './ActionRenderer.js';
+import { AdaptationRenderer } from './AdaptationRenderer.js';
 import { AmbientRenderer } from './AmbientRenderer.js';
 import { DebugRenderer } from './DebugRenderer.js';
 import { EventRenderer } from './EventRenderer.js';
@@ -13,13 +14,14 @@ export class ThreeScene {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
   readonly layers: readonly SceneRenderer[];
+  readonly adaptation = new AdaptationRenderer();
   #renderer: THREE.WebGLRenderer | null = null;
 
   constructor() {
     this.scene.background = new THREE.Color(0x06100d);
     this.camera.position.set(12, 10, 12);
     this.camera.lookAt(0, 1, -3);
-    this.layers = [new DebugRenderer(), new JourneyRenderer(), new AmbientRenderer(), new ActionRenderer(), new EventRenderer(), new ListenerRenderer()];
+    this.layers = [new DebugRenderer(), new JourneyRenderer(), new AmbientRenderer(), new ActionRenderer(), new EventRenderer(), this.adaptation, new ListenerRenderer()];
     this.layers.forEach((layer) => layer.initialize(this.scene));
   }
 
@@ -32,6 +34,11 @@ export class ThreeScene {
 
   update(state: Readonly<RuntimeWorldState>): void {
     this.layers.forEach((layer) => layer.update(state));
+    this.render();
+  }
+
+  showAdaptation(state: Readonly<RuntimeWorldState>, message: string): void {
+    this.adaptation.trigger(state, message);
     this.render();
   }
 

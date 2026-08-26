@@ -55,6 +55,7 @@ export class AdaptivePlannerEngine {
   readonly #lifecycles = new Map<string, AdaptationLifecycle>();
   readonly #memory = new SessionAdaptationMemory();
   #requestSequence = 0;
+  #plannerRequestInFlight = false;
 
   constructor(options: {
     config: AdaptivePlannerConfig;
@@ -134,6 +135,25 @@ export class AdaptivePlannerEngine {
       ...(outcome ? { outcome } : {}),
     };
     if (!eligibility.eligible) return result;
+    if (this.#plannerRequestInFlight) {
+      result.eligibility = {
+        ...result.eligibility,
+        eligible: false,
+        reasons: ['planner_request_in_progress'],
+      };
+      return result;
+    }
+    const adaptiveProgress = Math.max(
+      0,
+      Math.min(
+        1,
+        (state.timestampMs - this.#config.openingDurationMs) /
+          (this.#config.closingStartMs - this.#config.openingDurationMs),
+      ),
+    );
+    const expectedByNow = Math.floor(
+      adaptiveProgress * this.#config.targetAdaptationsMin,
+    );
     const context = {
       state,
       recentStates: structuredClone(this.#checkpointStates.slice(-6)),
@@ -143,7 +163,16 @@ export class AdaptivePlannerEngine {
       secondsSinceLastMeaningfulChange,
       stasisPressure,
       transitionInProgress: state.timestampMs < this.#transitionUntilMs,
+      adaptationProgress: {
+        applied: this.#history.length,
+        targetMin: this.#config.targetAdaptationsMin,
+        targetMax: this.#config.targetAdaptationsMax,
+        expectedByNow,
+        behindPace: this.#history.length < expectedByNow,
+      },
     };
+    this.#plannerRequestInFlight = true;
+    try {
     const requestId = ++this.#requestSequence;
     const decision = await this.#decisionProvider.decide(context);
     if (requestId !== this.#requestSequence) {
@@ -167,11 +196,9 @@ export class AdaptivePlannerEngine {
       return result;
     }
     validateDecision2Selection(planning, decision2Input);
-    const validationCompletedSessionMs = Math.min(
-      state.timestampMs + this.#config.checkpointIntervalMs - 1,
+    const validationCompletedSessionMs =
       state.timestampMs +
-        Math.ceil((decision.latencyMs ?? 0) + (planning.latencyMs ?? 0)),
-    );
+      Math.ceil((decision.latencyMs ?? 0) + (planning.latencyMs ?? 0));
     let plan: SceneJourneyPlan;
     if (this.#basePlan) {
       const futurePatch = normalizeLegacyPlanPatch({
@@ -265,6 +292,9 @@ export class AdaptivePlannerEngine {
     result.planning = planning;
     result.plan = structuredClone(plan);
     return result;
+    } finally {
+      this.#plannerRequestInFlight = false;
+    }
   }
 
   get currentPlan(): SceneJourneyPlan {

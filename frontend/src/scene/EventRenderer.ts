@@ -11,10 +11,11 @@ export class EventRenderer implements SceneRenderer {
   initialize(scene: THREE.Scene): void { this.group.name = 'events'; scene.add(this.group); }
   update(state: Readonly<RuntimeWorldState>): void {
     syncObjects(this.group, this.objects, state.event, () => new THREE.Mesh(
-      new THREE.IcosahedronGeometry(0.26), new THREE.MeshBasicMaterial({ wireframe: true }),
+      new THREE.IcosahedronGeometry(0.38), new THREE.MeshBasicMaterial({ wireframe: true, transparent: true, opacity: 0.85 }),
     ), (object, value) => {
       object.position.fromArray(value.worldPosition);
       object.visible = value.active || value.lifecycle === 'waiting';
+      object.scale.setScalar(value.active ? 1.6 : 0.9);
       (object as THREE.Mesh).material = (object as THREE.Mesh).material as THREE.MeshBasicMaterial;
       ((object as THREE.Mesh).material as THREE.MeshBasicMaterial).color.setHex(lifecycleColor[value.lifecycle]);
       object.userData = { assetId: value.assetId, velocity: [...value.velocity], gain: value.gain, lifecycle: value.lifecycle };

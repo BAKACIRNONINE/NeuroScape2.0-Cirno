@@ -193,4 +193,59 @@ describe('shared Base Plan and future patching', () => {
     );
     expect(stream).not.toHaveProperty('locationId');
   });
+
+  it('projects a model-authored past event into executable runtime time', () => {
+    const futurePatch = normalizeLegacyPlanPatch({
+      adaptationId: 'adapt-past-event',
+      patch: {
+        reasoningSummary: 'Add one short cue.',
+        upsertEvent: [
+          {
+            id: 'adapt-rustle',
+            assetId: 'forest_leaf_rustle_mid_01',
+            activationTimeMs: 12_000,
+            durationMs: 7_000,
+            trajectory: [
+              { locationId: 'clearing', timestampMs: 12_000 },
+              { locationId: 'stream_bank', timestampMs: 18_000 },
+            ],
+            gain: 0.24,
+          },
+        ],
+        transitionDurationMs: 1_000,
+      },
+      decision: {
+        decision: 'adapt',
+        intent: 'gently_reorient_attention',
+        salience: 'low',
+        evidenceSummary: {
+          position: 'intermediate',
+          trajectory: 'stable',
+          confidence: 'low',
+        },
+        reason: 'test',
+        maintainReason: null,
+        constraintsForDecision2: [],
+        shouldAdapt: true,
+        goal: 'gently-reorient',
+        scope: 'within-scene',
+        rationale: 'test',
+        provider: 'test',
+      },
+      basePlan: a,
+      nowMs: 220_000,
+      freezeBufferMs: phase1Config.executionFreezeBufferMs,
+    });
+    const inserted = futurePatch.operations[0]?.insertedElement;
+    const payload = inserted?.payload as {
+      activationTimeMs: number;
+      trajectory: Array<{ timestampMs: number }>;
+    };
+    expect(futurePatch.operations[0]?.effectiveStartMs).toBe(235_000);
+    expect(inserted?.startMs).toBe(235_000);
+    expect(payload.activationTimeMs).toBe(235_000);
+    expect(payload.trajectory.map((point) => point.timestampMs)).toEqual([
+      235_000, 241_000,
+    ]);
+  });
 });

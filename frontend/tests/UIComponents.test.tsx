@@ -25,6 +25,7 @@ afterEach(() => {
     sceneJourneyPlan: null,
     sceneJourneyPlanReceivedAtMs: null,
     runtimeWorldState: null,
+    decision2History: [],
   });
 });
 const populate = () => {
@@ -50,6 +51,16 @@ describe('migrated NeuroScape UI', () => {
     expect(neuro).not.toContain('Relaxation');
     expect(neuro).toContain('41%');
     expect(ai).toContain('Move gradually toward running water.');
+  });
+  it('keeps completed Decision 2 executions visible', () => {
+    runtimeStore.getState().recordDecision2({
+      timestampMs: 180_000,
+      message: 'Decision 2 · Added a distant bird cue.',
+    });
+    const ai = renderToStaticMarkup(<AIAdaptationPanel />);
+    expect(ai).toContain('Decision 2 Executions (1)');
+    expect(ai).toContain('3:00');
+    expect(ai).toContain('Added a distant bird cue.');
   });
   it('renders loading, supplied preview semantics, and the three-column session shell', () => {
     populate();

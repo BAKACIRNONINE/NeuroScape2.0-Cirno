@@ -8,6 +8,10 @@ export function AIAdaptationPanel() {
     runtimeStore,
     (state) => state.sessionRuntime.plannerMessage,
   );
+  const decision2History = useStore(
+    runtimeStore,
+    (state) => state.decision2History,
+  );
   return (
     <section className="glass-panel data-panel adaptation-panel">
       <h2>AI Adaptation</h2>
@@ -25,6 +29,23 @@ export function AIAdaptationPanel() {
         <div>
           <dt>Latest Checkpoint</dt>
           <dd>{plannerMessage ?? 'Awaiting checkpoint'}</dd>
+        </div>
+        <div>
+          <dt>Decision 2 Executions ({decision2History.length})</dt>
+          <dd>
+            {decision2History.length ? (
+              <ol className="decision-2-history">
+                {decision2History.map((entry, index) => (
+                  <li key={`${entry.timestampMs}-${index}`}>
+                    <time>{Math.floor(entry.timestampMs / 60_000)}:{String(Math.floor(entry.timestampMs / 1_000) % 60).padStart(2, '0')}</time>
+                    <span>{entry.message.replace(/^Decision 2\s*[·路]\s*/, '')}</span>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              'No Decision 2 applied yet'
+            )}
+          </dd>
         </div>
         <div>
           <dt>Planner Interpretation</dt>

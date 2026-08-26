@@ -15,7 +15,7 @@ def test_parse_five_value_eeg():
     assert parse_eeg_arguments((1, 2, 3, 4, 5))[-1] == 5.0
 
 
-@pytest.mark.parametrize("values", [(1, 2, 3), (1, 2, "bad", 4), (1, 2, 3, 4, 5, 6)])
+@pytest.mark.parametrize("values", [(1, 2, 3), (1, 2, "bad", 4), (1, 2, 3, 4, 5, 6), (1, 2, float("nan"), 4), (1, 2, float("inf"), 4)])
 def test_malformed_eeg(values):
     with pytest.raises(ValueError): parse_eeg_arguments(values)
 
@@ -23,6 +23,15 @@ def test_malformed_eeg(values):
 def test_receiver_records_malformed_messages():
     receiver = MuseOSCReceiver(); receiver.handle("/muse/eeg", 1, 2)
     assert receiver.malformed_messages == 1 and receiver.total_eeg_samples == 0
+
+
+def test_receiver_rejects_non_finite_eeg_but_still_records_safe_raw_packet():
+    records = []
+    receiver = MuseOSCReceiver(osc_callback=records.append)
+    receiver.handle("/muse/eeg", 1, float("nan"), 3, 4)
+    assert receiver.malformed_messages == 1
+    assert receiver.total_eeg_samples == 0
+    assert records[0]["malformed"] is True
 
 
 def test_receiver_channel_order_and_sample_index():

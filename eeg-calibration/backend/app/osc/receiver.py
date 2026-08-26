@@ -3,6 +3,7 @@ from __future__ import annotations
 import socket
 import threading
 import time
+import math
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable
@@ -21,6 +22,8 @@ def parse_eeg_arguments(arguments: tuple | list) -> tuple[float, float, float, f
         values = tuple(float(value) for value in arguments)
     except (TypeError, ValueError) as exc:
         raise ValueError("/muse/eeg arguments must be numeric") from exc
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("/muse/eeg arguments must be finite")
     return values[0], values[1], values[2], values[3], values[4] if len(values) == 5 else None
 
 

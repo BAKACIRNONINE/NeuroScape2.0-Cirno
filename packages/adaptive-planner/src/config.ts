@@ -36,6 +36,8 @@ export interface AdaptivePlannerConfig {
   maxSalienceLoad: number;
   reservedAdaptationHeadroom: number;
   maxCumulativePatches: number;
+  targetAdaptationsMin: number;
+  targetAdaptationsMax: number;
 }
 
 /**
@@ -67,7 +69,7 @@ export const phase1Config: AdaptivePlannerConfig = Object.freeze({
   referenceTolerance: 0.05,
   separationRatioMedium: 1,
   separationRatioHigh: 2.5,
-  maxMeaningfulStasisMs: 160_000,
+  maxMeaningfulStasisMs: 80_000,
   // TBD_PILOT: receding-horizon, latency, and restrained-complexity policy.
   patchHorizonMs: 120_000,
   executionFreezeBufferMs: 15_000,
@@ -82,4 +84,6 @@ export const phase1Config: AdaptivePlannerConfig = Object.freeze({
   maxSalienceLoad: 1,
   reservedAdaptationHeadroom: 0.25,
   maxCumulativePatches: 6,
+  targetAdaptationsMin: 5,
+  targetAdaptationsMax: 6,
 });

@@ -144,6 +144,13 @@ export interface DecisionContext {
   secondsSinceLastMeaningfulChange: number;
   stasisPressure: boolean;
   transitionInProgress: boolean;
+  adaptationProgress?: {
+    applied: number;
+    targetMin: number;
+    targetMax: number;
+    expectedByNow: number;
+    behindPace: boolean;
+  };
   basePlan?: BaseScenePlan;
   upcomingBaseHorizon?: BaseScenePlan['scheduledElements'];
   relevantPriorOutcomes?: AdaptationMemoryCase[];

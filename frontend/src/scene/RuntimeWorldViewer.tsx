@@ -11,7 +11,13 @@ export function RuntimeWorldViewer() {
     const world = new ThreeScene();
     world.mount(host);
     const renderLatest = () => { const state = runtimeStore.getState().runtimeWorldState; if (state) { const startedAt = performance.now(); world.update(state); runtimeDiagnostics.recordThreeFrame(performance.now() - startedAt); } };
-    const unsubscribe = runtimeStore.subscribe((state, previous) => { if (state.runtimeWorldState !== previous.runtimeWorldState) renderLatest(); });
+    const unsubscribe = runtimeStore.subscribe((state, previous) => {
+      if (state.runtimeWorldState !== previous.runtimeWorldState) renderLatest();
+      if (state.decision2History.length > previous.decision2History.length && state.runtimeWorldState) {
+        const latest = state.decision2History.at(-1);
+        if (latest) world.showAdaptation(state.runtimeWorldState, latest.message);
+      }
+    });
     const resize = () => world.resize(host.clientWidth, host.clientHeight);
     globalThis.addEventListener('resize', resize);
     renderLatest();

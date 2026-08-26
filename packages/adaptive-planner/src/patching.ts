@@ -250,24 +250,32 @@ export function normalizeLegacyPlanPatch(options: {
     }),
     ...(patch.upsertAction ?? []).map((payload) => ({
       layer: 'action' as const,
-      payload,
+      payload: structuredClone(payload),
     })),
     ...(patch.upsertEvent ?? []).map((payload) => ({
       layer: 'event' as const,
-      payload,
+      payload: structuredClone(payload),
     })),
   ];
   for (const { layer, payload } of upserts) {
     const target = basePlan.scheduledElements.find(
       (e) => e.elementId === payload.id,
     );
-    const startMs =
-      layer === 'event'
-        ? Math.max(
-            earliest,
-            (payload as { activationTimeMs: number }).activationTimeMs,
-          )
-        : earliest;
+    // The runtime owns absolute session timing. Decision 2 may describe event
+    // motion, but its activation timestamp is never trusted because the model
+    // response arrives after the checkpoint that produced the prompt.
+    const startMs = earliest;
+    if (layer === 'event') {
+      const eventPayload = payload as {
+        activationTimeMs: number;
+        trajectory: Array<{ timestampMs: number }>;
+      };
+      const shift = startMs - eventPayload.activationTimeMs;
+      eventPayload.activationTimeMs = startMs;
+      eventPayload.trajectory.forEach((waypoint) => {
+        waypoint.timestampMs += shift;
+      });
+    }
     if (target) {
       operations.push({
         operation: target.assetId === payload.assetId ? 'ADJUST' : 'REPLACE',

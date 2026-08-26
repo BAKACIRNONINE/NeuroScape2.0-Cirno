@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import queue
 import shutil
 import threading
@@ -14,6 +15,17 @@ from app import config
 from app.models.schemas import EEGSample, Marker
 
 EEG_FIELDS = list(EEGSample.model_fields)
+
+
+def json_safe(value: Any) -> Any:
+    """Replace non-finite floats recursively so one bad OSC packet cannot stop recording."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {key: json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    return value
 
 
 class BufferedSessionWriter:
@@ -53,11 +65,13 @@ class BufferedSessionWriter:
                     self._queue.task_done()
                     break
                 kind, record = item
-                if kind == "eeg":
-                    csv_writer.writerow(record)
-                else:
-                    handles[kind].write(json.dumps(record, allow_nan=False) + "\n")
-                self._queue.task_done()
+                try:
+                    if kind == "eeg":
+                        csv_writer.writerow(record)
+                    else:
+                        handles[kind].write(json.dumps(json_safe(record), allow_nan=False) + "\n")
+                finally:
+                    self._queue.task_done()
                 if self._queue.empty():
                     eeg_handle.flush()
                     for handle in handles.values():

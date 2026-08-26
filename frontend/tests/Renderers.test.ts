@@ -23,6 +23,7 @@ describe('authoritative scene renderers', () => {
     [ambient, action, event].forEach((renderer) => renderer.initialize(scene)); const state = snapshot();
     ambient.update(state); action.update(state); event.update(state);
     expect(ambient.objects.size).toBe(1); expect(ambient.getObject('wind')).toBeUndefined();
+    expect(ambient.globalObjects.get('wind')?.visible).toBe(true);
     expect(action.getObject('breath')?.position.toArray()).toEqual([9, 8, 7]);
     expect(event.getObject('bird')?.position.toArray()).toEqual([-3, 4, -5]);
     state.action = []; action.update(state); expect(action.objects.size).toBe(0);

@@ -10,7 +10,7 @@ import type {
   PlanningResult,
 } from './types.js';
 
-export const DECISION_2_PROMPT_VERSION = 'decision-2-spatial-contract-v6';
+export const DECISION_2_PROMPT_VERSION = 'decision-2-spatial-contract-v7';
 
 function authoredEventDurationMs(candidate: Decision2Candidate): number {
   const asset = audioLibraryById.get(candidate.assetId);
@@ -354,6 +354,14 @@ export function buildDecision2Prompt(
       constraintsForDecision2: decision.constraintsForDecision2,
     },
     executionContext: {
+      calibrationFallback: {
+        active:
+          context.state.calibrationQuality === 'low' ||
+          context.state.calibrationQuality === 'unusable',
+        calibrationQuality: context.state.calibrationQuality,
+        measurementConfidence: context.state.measurementConfidence,
+        priority: 'system_sound_hierarchy_and_asset_quality',
+      },
       phase: context.state.phase,
       currentScene,
       currentLocation,
@@ -434,6 +442,8 @@ export function buildDecision2Prompt(
     'At least one newly selected asset should create an actually audible source change; do not claim adaptation while merely restating the current plan.',
     'Use only assetId values in candidates. Never invent an asset, location, motion, duration, gain, or numerical range.',
     'Treat candidate summaries as authoritative. Do not override their resolved recommendedVolume, authored duration, playback contract, limits, compatibility, or quality attenuation.',
+    'When executionContext.calibrationFallback.active is true, do not optimize against EEG position or trajectory. Optimize the system soundscape itself: preserve a stable primary ambient foundation, allow at most one clearly subordinate supporting ambient role, keep body/action cues intentional, keep events sparse and foregrounded only briefly, and avoid simultaneous competition between layers.',
+    'In calibration fallback mode, rank compatible candidates by authored quality and system suitability: prefer qualityTier=preferred, then standard, and use limited_use only when no safer compatible candidate fills the required role. Use priority, selectionWeight, qualityAttenuation, recommendedVolume, suddenness, and intensity together; never replace a coherent layer with a lower-quality asset merely to create change.',
     'For an event, durationMs MUST equal defaultMotion.durationSec * 1000 when defaultMotion.durationSec is non-null; otherwise it MUST equal autoDeleteAfterSec * 1000. autoDeleteAfterSec is only the fallback lifecycle when no authored motion duration exists. A looping asset may remain active until a later patch removes it.',
     'Prefer an unused compatible variant and respect the already-applied exact-asset and family cooldown filtering.',
     'Add at most one new salient event in one patch. Event-source movement is not listener movement. A body-anchored action does not require a scene transition. Footsteps imply listener movement only when explicitly assigned a locomotion role.',

@@ -33,7 +33,11 @@ export function dispatchServerMessage(message: ServerMessage, store: RuntimeStor
     case 'NeuroState': accepted = state.publishNeuroState(message.payload, message.timestampMs).accepted; break;
     case 'SceneJourneyPlan': accepted = state.publishSceneJourneyPlan(message.payload, message.timestampMs).accepted; break;
     case 'SessionStatus': state.setSessionRuntime({ ...message.payload }); break;
-    case 'PlannerStatus': state.setSessionRuntime({ plannerStatus: message.payload.status, plannerMessage: message.payload.message }); break;
+    case 'PlannerStatus':
+      state.setSessionRuntime({ plannerStatus: message.payload.status, plannerMessage: message.payload.message });
+      if (message.payload.message?.startsWith('Decision 2'))
+        state.recordDecision2({ timestampMs: message.timestampMs, message: message.payload.message });
+      break;
     case 'Error': state.setConnectionState({ error: `${message.payload.code}: ${message.payload.message}`, status: 'degraded' }); break;
     case 'Ping': case 'Pong': break;
   }
