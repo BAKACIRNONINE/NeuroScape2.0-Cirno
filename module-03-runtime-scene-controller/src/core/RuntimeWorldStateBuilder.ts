@@ -18,7 +18,9 @@ export interface RuntimeWorldStateComponents {
 }
 
 export class RuntimeWorldStateBuilder {
-  constructor(private readonly onBuildDurationMs?: (durationMs: number) => void) {}
+  constructor(
+    private readonly onBuildDurationMs?: (durationMs: number) => void,
+  ) {}
 
   build(components: RuntimeWorldStateComponents): RuntimeWorldState {
     const startedAt = performance.now();
@@ -32,10 +34,31 @@ function cloneVector(vector: Vector3): Vector3 {
   return [vector[0], vector[1], vector[2]];
 }
 
+function freezeAudiblePolicies<
+  T extends AmbientState | ActionState | EventState,
+>(item: T): T {
+  const copy = { ...item };
+  if (copy.distancePolicy)
+    copy.distancePolicy = Object.freeze({ ...copy.distancePolicy });
+  if (copy.playback)
+    copy.playback = Object.freeze({
+      ...copy.playback,
+      ...(copy.playback.perRepeatGain
+        ? {
+            perRepeatGain: Object.freeze([
+              ...copy.playback.perRepeatGain,
+            ]) as unknown as number[],
+          }
+        : {}),
+    });
+  return copy;
+}
+
 function freezeSnapshot(state: RuntimeWorldState): RuntimeWorldState {
   const ambient = state.ambient.map((item): AmbientState => {
-    const copy: AmbientState = { ...item };
-    if (item.worldPosition) copy.worldPosition = cloneVector(item.worldPosition);
+    const copy: AmbientState = freezeAudiblePolicies(item);
+    if (item.worldPosition)
+      copy.worldPosition = cloneVector(item.worldPosition);
     return Object.freeze(copy);
   });
   const snapshot = {
@@ -50,10 +73,14 @@ function freezeSnapshot(state: RuntimeWorldState): RuntimeWorldState {
       ? Object.freeze({
           ...state.journey,
           plannedPath: Object.freeze(
-            state.journey.plannedPath.map((point) => Object.freeze(cloneVector(point))),
+            state.journey.plannedPath.map((point) =>
+              Object.freeze(cloneVector(point)),
+            ),
           ),
           remainingWaypoints: Object.freeze(
-            state.journey.remainingWaypoints.map((point) => Object.freeze(cloneVector(point))),
+            state.journey.remainingWaypoints.map((point) =>
+              Object.freeze(cloneVector(point)),
+            ),
           ),
         })
       : undefined,
@@ -61,7 +88,7 @@ function freezeSnapshot(state: RuntimeWorldState): RuntimeWorldState {
     action: Object.freeze(
       state.action.map((item) =>
         Object.freeze({
-          ...item,
+          ...freezeAudiblePolicies(item),
           relativePosition: Object.freeze(cloneVector(item.relativePosition)),
           worldPosition: Object.freeze(cloneVector(item.worldPosition)),
         }),
@@ -70,7 +97,7 @@ function freezeSnapshot(state: RuntimeWorldState): RuntimeWorldState {
     event: Object.freeze(
       state.event.map((item) =>
         Object.freeze({
-          ...item,
+          ...freezeAudiblePolicies(item),
           worldPosition: Object.freeze(cloneVector(item.worldPosition)),
           velocity: Object.freeze(cloneVector(item.velocity)),
         }),

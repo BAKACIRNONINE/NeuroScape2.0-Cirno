@@ -39,10 +39,10 @@ export class PlaybackScheduler {
     buffer: AudioBuffer,
     when: number,
     repeatCount: number,
-    interRepeatGapSeconds: number,
+    repeatGapSeconds: number,
   ): boolean {
     if (target.playing || target.activationPlayed) return false;
-    const count = Math.max(2, Math.min(3, Math.floor(repeatCount)));
+    const count = Math.max(1, Math.floor(repeatCount));
     const start = Math.max(when, this.context.currentTime);
     target.sources = new Set();
     target.playing = true;
@@ -63,7 +63,7 @@ export class PlaybackScheduler {
           target.onPlaybackEnded?.();
         }
       };
-      source.start(start + index * (buffer.duration + interRepeatGapSeconds));
+      source.start(start + index * (buffer.duration + repeatGapSeconds));
     }
     return true;
   }

@@ -35,13 +35,13 @@ export class GainManager {
     gains: readonly number[],
     startTime: number,
     clipDurationSeconds: number,
-    interRepeatGapSeconds: number,
+    repeatGapSeconds: number,
   ): void {
     parameter.cancelScheduledValues(startTime);
     gains.forEach((gain, index) => {
       parameter.setValueAtTime(
         gain,
-        startTime + index * (clipDurationSeconds + interRepeatGapSeconds),
+        startTime + index * (clipDurationSeconds + repeatGapSeconds),
       );
     });
   }

@@ -29,7 +29,6 @@ export function sessionPhase(
   config: AdaptivePlannerConfig,
 ): SessionPhase {
   if (timestampMs < config.openingDurationMs) return 'opening';
-  if (timestampMs >= config.closingStartMs) return 'closing';
   return 'adaptive';
 }
 
@@ -136,9 +135,7 @@ export class AttentionInterpreter {
     const previousStates = this.#states.filter(
       (item) =>
         item.timestampMs >=
-        epoch.timestampMs -
-          this.#config.checkpointIntervalMs *
-            (this.#config.trendWindowCount - 1),
+        epoch.timestampMs - this.#config.trendObservationSpanMs,
     );
     const positions = [
       ...previousStates.map((item) => item.relativePosition),

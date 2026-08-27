@@ -63,6 +63,22 @@ export function SummaryPage({
     audio = audioActivePeriods(recording),
     plans = plannerTimeline(recording),
     locations = semanticLocationDurations(recording);
+  const playbackEvidence = recording.audioPlaybackEvidence ?? [];
+  const planAppliedAdaptations = new Set(
+    playbackEvidence
+      .filter((event) => event.status === 'PLAN_APPLIED')
+      .map((event) => event.adaptationId),
+  ).size;
+  const experiencedAdaptations = new Set(
+    playbackEvidence
+      .filter((event) => event.status === 'AUDIO_STARTED')
+      .map((event) => event.adaptationId),
+  ).size;
+  const failedAdaptations = new Set(
+    playbackEvidence
+      .filter((event) => event.status === 'AUDIO_FAILED')
+      .map((event) => event.adaptationId),
+  ).size;
   const importFile = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -269,7 +285,12 @@ export function SummaryPage({
       </section>
       <div className="summary-columns">
         <section className="summary-panel">
-          <h2>Planner Adaptations</h2>
+          <h2>Adaptation Execution Evidence</h2>
+          <p>
+            {planAppliedAdaptations} plan applied 路 {experiencedAdaptations}{' '}
+            experienced (audio started) 路 {failedAdaptations} audio failed
+          </p>
+          <h3>Plan applications</h3>
           {plans.length ? (
             plans.map((plan) => (
               <article

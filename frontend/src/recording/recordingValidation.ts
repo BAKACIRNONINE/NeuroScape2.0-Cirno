@@ -109,6 +109,10 @@ export function validateRecordedSession(value: unknown): RecordingValidation {
     errors.push('Invalid or unordered plannerEvents');
   if (
     !Array.isArray(value.adaptiveTrace) ||
+    (value.audioPlaybackEvidence !== undefined &&
+      !Array.isArray(value.audioPlaybackEvidence)) ||
+    (value.audioExecutionDiagnostics !== undefined &&
+      !Array.isArray(value.audioExecutionDiagnostics)) ||
     !nondecreasing(
       (value.adaptiveTrace as Array<{ timestampMs: number }>).map(
         (item) => item.timestampMs,

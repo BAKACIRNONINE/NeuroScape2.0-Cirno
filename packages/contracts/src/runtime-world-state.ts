@@ -1,4 +1,5 @@
 import type { SessionTimestampMs } from './neuro-state.js';
+import type { DistancePolicy, PlaybackPolicy } from './scene-journey-plan.js';
 
 export type Vector3 = [number, number, number];
 export type Quaternion = [number, number, number, number];
@@ -12,35 +13,58 @@ export interface ListenerState {
 
 export interface AmbientState {
   id: string;
+  adaptationId?: string;
   assetId: string;
   mode: 'global' | 'localized';
   worldPosition?: Vector3;
   gain: number;
   active: boolean;
+  lifecycle?: EventLifecycle;
+  distancePolicy?: DistancePolicy;
+  playback?: PlaybackPolicy;
+  plannedStartMs?: number;
+  runtimeActivationMs?: number;
+  plannedEndMs?: number;
+  runtimeFinishedMs?: number;
 }
 
 export type ActionAttachment = 'head' | 'chest' | 'feet' | 'body';
 
 export interface ActionState {
   id: string;
+  adaptationId?: string;
   assetId: string;
   attachment: ActionAttachment;
   relativePosition: Vector3;
   worldPosition: Vector3;
   gain: number;
   active: boolean;
+  lifecycle?: EventLifecycle;
+  distancePolicy?: DistancePolicy;
+  playback?: PlaybackPolicy;
+  plannedStartMs?: number;
+  runtimeActivationMs?: number;
+  plannedEndMs?: number;
+  runtimeFinishedMs?: number;
 }
 
 export type EventLifecycle = 'waiting' | 'active' | 'finished';
 
 export interface EventState {
   id: string;
+  adaptationId?: string;
   assetId: string;
   worldPosition: Vector3;
   velocity: Vector3;
   gain: number;
   lifecycle: EventLifecycle;
   active: boolean;
+  plannedStartMs?: number;
+  runtimeActivationMs?: number;
+  plannedEndMs?: number;
+  runtimeFinishedMs?: number;
+  distancePolicy?: DistancePolicy;
+  playback?: PlaybackPolicy;
 }
 
 export interface RuntimeJourneyState {

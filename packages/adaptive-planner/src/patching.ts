@@ -1,4 +1,5 @@
 import type { AdaptivePlannerConfig } from './config.js';
+import { canonicalPlaybackPolicy } from '@neuroscape/contracts';
 import {
   measureBasePlan,
   type BasePlanElement,
@@ -104,6 +105,8 @@ function applyOperation(
     target.assetFamily = operation.replacementAssetId.replace(/_\d+$/, '');
     (target.payload as { assetId: string }).assetId =
       operation.replacementAssetId;
+    (target.payload as { playback?: import('@neuroscape/contracts').PlaybackPolicy }).playback =
+      canonicalPlaybackPolicy(operation.replacementAssetId, target.gain);
   }
 }
 
@@ -143,8 +146,26 @@ export function validateAndProjectPatch(options: {
       : undefined;
     if (op.operation !== 'INSERT' && !target)
       violations.push('unknown_target_element');
-    if (target && target.startMs < freezeEnd && op.operation !== 'KEEP')
+    if (
+      target &&
+      target.startMs >= nowMs &&
+      target.startMs < freezeEnd &&
+      op.operation !== 'KEEP'
+    )
       violations.push('target_is_immutable');
+    if (target && target.endMs <= nowMs && op.operation !== 'KEEP')
+      violations.push('target_already_finished');
+    if (
+      op.operation === 'INSERT' &&
+      op.insertedElement &&
+      basePlan.scheduledElements.some(
+        (element) =>
+          element.assetId === op.insertedElement!.assetId &&
+          element.startMs <= nowMs &&
+          nowMs < element.endMs,
+      )
+    )
+      violations.push('duplicate_active_asset_insert');
     if (op.operation === 'ADJUST' && !target?.adjustable)
       violations.push('target_not_adjustable');
     if (op.operation === 'REPLACE' && !target?.replaceable)
@@ -153,9 +174,38 @@ export function validateAndProjectPatch(options: {
       violations.push('target_not_suppressible');
   }
   const projectedPlan = structuredClone(basePlan);
-  proposedPatch.operations.forEach((op) =>
-    applyOperation(projectedPlan.scheduledElements, op),
-  );
+  proposedPatch.operations.forEach((op) => {
+    applyOperation(projectedPlan.scheduledElements, op);
+    if (op.operation === 'KEEP' || op.operation === 'SUPPRESS') return;
+    const elementId = op.insertedElement?.elementId ?? op.targetElementId;
+    const element = projectedPlan.scheduledElements.find(
+      (candidate) => candidate.elementId === elementId,
+    );
+    if (element)
+      (element.payload as { adaptationId?: string }).adaptationId =
+        proposedPatch.adaptationId;
+  });
+  for (const element of projectedPlan.scheduledElements) {
+    if (element.startMs >= basePlan.profile.durationMs)
+      violations.push('element_starts_at_or_after_session_end');
+    if (element.endMs > basePlan.profile.durationMs)
+      violations.push('element_ends_after_session_end');
+    if (element.layer === 'event') {
+      const payload = element.payload as {
+        activationTimeMs: number;
+        durationMs: number;
+        trajectory: Array<{ timestampMs: number }>;
+      };
+      if (
+        payload.activationTimeMs + payload.durationMs >
+          basePlan.profile.durationMs ||
+        payload.trajectory.some(
+          (waypoint) => waypoint.timestampMs > basePlan.profile.durationMs,
+        )
+      )
+        violations.push('event_payload_ends_after_session_end');
+    }
+  }
   const projected = projection(
     projectedPlan,
     acceptedPatches.length + 1,
@@ -173,11 +223,6 @@ export function validateAndProjectPatch(options: {
     violations.push('salience_budget_exceeded');
   if (projected.cumulativePatchCount > config.maxCumulativePatches)
     violations.push('cumulative_patch_budget_exceeded');
-  if (
-    proposedPatch.operations.some((op) => op.operation === 'INSERT') &&
-    !proposedPatch.reasonCodes.includes('NO_SMALLER_OPERATION_AVAILABLE')
-  )
-    violations.push('insert_not_minimal');
   return {
     valid: violations.length === 0,
     violations: [...new Set(violations)],
@@ -227,6 +272,7 @@ export function normalizeLegacyPlanPatch(options: {
   const { patch, decision, basePlan, nowMs, freezeBufferMs } = options;
   const earliest = nowMs + freezeBufferMs;
   const operations: FuturePatchOperation[] = [];
+  let sessionBoundaryRejected = false;
   for (const id of patch.removeIds ?? []) {
     const target = basePlan.scheduledElements.find((e) => e.elementId === id);
     operations.push({
@@ -258,6 +304,10 @@ export function normalizeLegacyPlanPatch(options: {
     })),
   ];
   for (const { layer, payload } of upserts) {
+    if (earliest >= basePlan.profile.durationMs) {
+      sessionBoundaryRejected = true;
+      continue;
+    }
     const target = basePlan.scheduledElements.find(
       (e) => e.elementId === payload.id,
     );
@@ -268,13 +318,30 @@ export function normalizeLegacyPlanPatch(options: {
     if (layer === 'event') {
       const eventPayload = payload as {
         activationTimeMs: number;
+        durationMs: number;
         trajectory: Array<{ timestampMs: number }>;
+        playback?: { durationPolicy?: string };
       };
       const shift = startMs - eventPayload.activationTimeMs;
       eventPayload.activationTimeMs = startMs;
       eventPayload.trajectory.forEach((waypoint) => {
         waypoint.timestampMs += shift;
       });
+      const remainingMs = basePlan.profile.durationMs - startMs;
+      if (eventPayload.durationMs > remainingMs) {
+        if (eventPayload.playback?.durationPolicy !== 'truncate-at-end')
+          {
+            sessionBoundaryRejected = true;
+            continue;
+          }
+        eventPayload.durationMs = remainingMs;
+        eventPayload.trajectory.forEach((waypoint) => {
+          waypoint.timestampMs = Math.min(
+            waypoint.timestampMs,
+            basePlan.profile.durationMs,
+          );
+        });
+      }
     }
     if (target) {
       operations.push({
@@ -352,6 +419,7 @@ export function normalizeLegacyPlanPatch(options: {
         ? ['NO_SMALLER_OPERATION_AVAILABLE']
         : ['MINIMAL_SUFFICIENT_PATCH']),
       'PRESERVE_BASE_CONTINUITY',
+      ...(sessionBoundaryRejected ? ['SESSION_BOUNDARY_NO_SAFE_PATCH'] : []),
     ],
   };
 }

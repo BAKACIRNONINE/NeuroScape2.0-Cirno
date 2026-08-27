@@ -20,7 +20,9 @@ import {
   type AdaptiveTraceRecord,
   type NeuroState,
   type ServerMessage,
+  type AudioPlaybackEvidence,
 } from '@neuroscape/contracts';
+import { audioEngine } from '../audio/AudioEngine.js';
 import {
   ActionController,
   AmbientController,
@@ -48,6 +50,10 @@ export interface AdaptiveHarnessState {
   timestampMs: number;
   checkpointCount: number;
   adaptationCount: number;
+  planAppliedCount: number;
+  runtimeActivatedAdaptationCount: number;
+  experiencedAdaptationCount: number;
+  audioFailedAdaptationCount: number;
 }
 export type AdaptiveRunMode = 'mock-fast' | 'study-realtime';
 export interface AdaptiveHarnessStartOptions {
@@ -93,7 +99,16 @@ export class AdaptiveIntegrationHarness {
     timestampMs: 0,
     checkpointCount: 0,
     adaptationCount: 0,
+    planAppliedCount: 0,
+    runtimeActivatedAdaptationCount: 0,
+    experiencedAdaptationCount: 0,
+    audioFailedAdaptationCount: 0,
   };
+  #unsubscribeEvidence: (() => void) | null = null;
+  #unsubscribeAudioDiagnostics: (() => void) | null = null;
+  readonly #runtimeActivatedIds = new Set<string>();
+  readonly #experiencedIds = new Set<string>();
+  readonly #audioFailedIds = new Set<string>();
 
   constructor(
     store: RuntimeStore = runtimeStore,
@@ -118,6 +133,15 @@ export class AdaptiveIntegrationHarness {
     this.#sessionDurationMs =
       options.sessionDurationMs ?? phase1Config.sessionDurationMs;
     this.#store.getState().resetSessionStreams();
+    this.#runtimeActivatedIds.clear();
+    this.#experiencedIds.clear();
+    this.#audioFailedIds.clear();
+    this.#unsubscribeEvidence = audioEngine.subscribePlaybackEvidence(
+      (evidence) => this.handlePlaybackEvidence(evidence),
+    );
+    this.#unsubscribeAudioDiagnostics = audioEngine.subscribeExecutionDiagnostics(
+      (diagnostic) => sessionRecorder.appendAudioExecutionDiagnostic(diagnostic),
+    );
     runtimeDiagnostics.reset();
     this.#runtime = this.createRuntime();
     const assignment = assignSharedBasePlan(options.participantId ?? 'P001');
@@ -147,6 +171,10 @@ export class AdaptiveIntegrationHarness {
       timestampMs: 0,
       checkpointCount: 0,
       adaptationCount: 0,
+      planAppliedCount: 0,
+      runtimeActivatedAdaptationCount: 0,
+      experiencedAdaptationCount: 0,
+      audioFailedAdaptationCount: 0,
     };
     this.dispatch('PlannerStatus', 0, {
       status: 'ready',
@@ -199,6 +227,10 @@ export class AdaptiveIntegrationHarness {
   }
   end(publish = true): void {
     this.clearTimer();
+    this.#unsubscribeEvidence?.();
+    this.#unsubscribeEvidence = null;
+    this.#unsubscribeAudioDiagnostics?.();
+    this.#unsubscribeAudioDiagnostics = null;
     this.#runtime?.shutdown();
     this.#runtime = null;
     this.#planner = null;
@@ -370,7 +402,7 @@ export class AdaptiveIntegrationHarness {
         'decision-1',
         result.decision.provider.startsWith('openai') ? 'openai' : 'mock-llm',
         result.decision.rationale,
-        result.decision,
+        { ...result.decision, timing: result.timing },
       );
       this.dispatch('PlannerStatus', result.state.timestampMs, {
         status: result.decision.shouldAdapt ? 'planning' : 'ready',
@@ -378,22 +410,30 @@ export class AdaptiveIntegrationHarness {
       });
     }
     if (result.planning && result.plan && this.#runtime) {
+      const planAppliedMs =
+        result.timing.patchValidationCompleteMs ?? result.state.timestampMs;
+      result.timing.planAppliedMs = planAppliedMs;
       this.trace(
         result.state.timestampMs,
         'decision-2',
         result.planning.provider.startsWith('openai') ? 'openai' : 'mock-llm',
         result.planning.rationale,
-        result.planning,
+        {
+          ...result.planning,
+          timing: result.timing,
+          selectionTrace: result.selectionTrace,
+        },
       );
       this.#runtime.applyPlan(result.plan);
+      audioEngine.preloadAssets(result.planning.selectedAssetIds);
       if (result.futurePatch) {
         this.#planner?.acknowledgeApplication(
           result.futurePatch.adaptationId,
-          'APPLIED',
-          result.state.timestampMs,
+          'PLAN_APPLIED',
+          planAppliedMs,
         );
         this.trace(
-          result.state.timestampMs,
+          planAppliedMs,
           'patch-lifecycle',
           'deterministic',
           `${result.futurePatch.adaptationId} applied`,
@@ -404,15 +444,17 @@ export class AdaptiveIntegrationHarness {
           },
         );
       }
-      this.dispatch('SceneJourneyPlan', result.state.timestampMs, result.plan);
+      this.dispatch('SceneJourneyPlan', planAppliedMs, result.plan);
       this.trace(
-        result.state.timestampMs,
+        planAppliedMs,
         'plan-applied',
         'deterministic',
         `Module 03 accepted ${result.plan.planId}`,
         {
           planId: result.plan.planId,
           selectedAssetIds: result.planning.selectedAssetIds,
+          timing: result.timing,
+          selectionTrace: result.selectionTrace,
         },
       );
       this.dispatch('PlannerStatus', result.state.timestampMs, {
@@ -421,9 +463,106 @@ export class AdaptiveIntegrationHarness {
       });
       this.#state = {
         ...this.#state,
-        adaptationCount: this.#state.adaptationCount + 1,
+        planAppliedCount: this.#state.planAppliedCount + 1,
       };
+      if (result.futurePatch)
+        this.recordPlanApplied(result.futurePatch.adaptationId, result);
     }
+  }
+
+  private recordPlanApplied(
+    adaptationId: string,
+    result: AdaptiveCheckpointResult,
+  ): void {
+    const sounds = result.plan
+      ? [
+          ...result.plan.soundscape.ambient.map((item) => ({
+            ...item,
+            layer: 'ambient' as const,
+            plannedStartMs: item.startMs,
+            plannedEndMs: item.endMs,
+          })),
+          ...result.plan.soundscape.action.map((item) => ({
+            ...item,
+            layer: 'action' as const,
+            plannedStartMs: item.startMs,
+            plannedEndMs: item.endMs,
+          })),
+          ...result.plan.soundscape.event.map((item) => ({
+            ...item,
+            layer: 'event' as const,
+            plannedStartMs: item.activationTimeMs,
+            plannedEndMs: item.activationTimeMs + item.durationMs,
+          })),
+        ].filter((item) => item.adaptationId === adaptationId)
+      : [];
+    sounds.forEach((sound) =>
+      sessionRecorder.appendAudioPlaybackEvidence({
+        adaptationId,
+        elementId: sound.id,
+        assetId: sound.assetId,
+        layer: sound.layer,
+        status: 'PLAN_APPLIED',
+        timestampMs: result.timing.planAppliedMs ?? result.state.timestampMs,
+        plannedStartMs: sound.plannedStartMs,
+        plannedEndMs: sound.plannedEndMs,
+        decision2RequestStartMs: result.timing.decision2RequestStartMs,
+        decision2ResponseMs: result.timing.decision2ResponseMs,
+        patchValidationCompleteMs: result.timing.patchValidationCompleteMs,
+        planAppliedMs: result.timing.planAppliedMs,
+        eligibleCandidateCount: result.selectionTrace?.eligibleCandidateCount,
+        retrievedCandidateIds: result.selectionTrace?.retrievedCandidateIds,
+        recentlyUsedAssetIds: result.selectionTrace?.recentlyUsedAssetIds,
+        selectedAssetIds: result.planning?.selectedAssetIds,
+      }),
+    );
+  }
+
+  private handlePlaybackEvidence(evidence: AudioPlaybackEvidence): void {
+    sessionRecorder.appendAudioPlaybackEvidence(evidence);
+    if (this.#condition !== 'adaptive') return;
+    if (evidence.status === 'RUNTIME_ACTIVATED') {
+      if (!this.#runtimeActivatedIds.has(evidence.adaptationId)) {
+        this.#runtimeActivatedIds.add(evidence.adaptationId);
+        this.#planner?.acknowledgeApplication(
+          evidence.adaptationId,
+          'RUNTIME_ACTIVATED',
+          evidence.timestampMs,
+        );
+      }
+    } else if (evidence.status === 'AUDIO_STARTED') {
+      if (!this.#experiencedIds.has(evidence.adaptationId)) {
+        this.#experiencedIds.add(evidence.adaptationId);
+        this.#planner?.acknowledgeApplication(
+          evidence.adaptationId,
+          'AUDIO_STARTED',
+          evidence.audioStartMs ?? evidence.timestampMs,
+        );
+      }
+    } else if (evidence.status === 'AUDIO_FINISHED') {
+      this.#planner?.acknowledgeApplication(
+        evidence.adaptationId,
+        'AUDIO_FINISHED',
+        evidence.audioEndMs ?? evidence.timestampMs,
+      );
+    } else if (evidence.status === 'AUDIO_FAILED') {
+      if (!this.#audioFailedIds.has(evidence.adaptationId)) {
+        this.#audioFailedIds.add(evidence.adaptationId);
+        this.#planner?.acknowledgeApplication(
+          evidence.adaptationId,
+          'AUDIO_FAILED',
+          evidence.timestampMs,
+        );
+      }
+    }
+    this.#state = {
+      ...this.#state,
+      adaptationCount: this.#experiencedIds.size,
+      runtimeActivatedAdaptationCount: this.#runtimeActivatedIds.size,
+      experiencedAdaptationCount: this.#experiencedIds.size,
+      audioFailedAdaptationCount: this.#audioFailedIds.size,
+    };
+    this.emit();
   }
 
   private toProtocolNeuroState(state: AttentionState): NeuroState {

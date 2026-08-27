@@ -109,7 +109,7 @@ describe('unbounded calibration-reference state', () => {
     expect(decision.salience).toBe('minimal');
   });
 
-  it('hard-blocks adaptation while a transition is in progress', () => {
+  it('exposes an in-progress transition without globally blocking planning', () => {
     const state = new AttentionInterpreter(
       profile(0.5, 0.4),
       phase1Config,
@@ -122,7 +122,7 @@ describe('unbounded calibration-reference state', () => {
       200_000,
       true,
     );
-    expect(gate.eligible).toBe(false);
-    expect(gate.reasons).toContain('transition_in_progress');
+    expect(gate.eligible).toBe(true);
+    expect(gate.reasons).not.toContain('transition_in_progress');
   });
 });

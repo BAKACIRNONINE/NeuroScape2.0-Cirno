@@ -1,4 +1,8 @@
-import type { Quaternion, Vector3 } from '@neuroscape/contracts';
+import type {
+  DistancePolicy,
+  Quaternion,
+  Vector3,
+} from '@neuroscape/contracts';
 
 export const EPSILON = 1e-6;
 
@@ -32,7 +36,11 @@ export function scaleVector(vector: Vector3, scalar: number): Vector3 {
   return [vector[0] * scalar, vector[1] * scalar, vector[2] * scalar];
 }
 
-export function lerpVector(start: Vector3, end: Vector3, progress: number): Vector3 {
+export function lerpVector(
+  start: Vector3,
+  end: Vector3,
+  progress: number,
+): Vector3 {
   return [
     lerp(start[0], end[0], progress),
     lerp(start[1], end[1], progress),
@@ -48,9 +56,20 @@ export function distance(left: Vector3, right: Vector3): number {
   return vectorLength(subtractVector(left, right));
 }
 
-/** Gentle rolloff with an audible floor; intentionally not inverse-square attenuation. */
-export function gentleDistanceGain(distanceMeters: number): number {
-  return Math.max(0.15, 1 / (1 + Math.max(0, distanceMeters) / 10));
+export function plannedDistanceGain(
+  distanceMeters: number,
+  policy: DistancePolicy | undefined,
+): number {
+  if (!policy || policy.mode === 'none') return 1;
+  const reference = policy.referenceDistance ?? 1;
+  const bounded = Math.min(
+    Math.max(0, distanceMeters),
+    policy.maxDistance ?? Number.POSITIVE_INFINITY,
+  );
+  return Math.max(
+    policy.minGain ?? 0,
+    reference / Math.max(reference, bounded),
+  );
 }
 
 export function normalizeVector(vector: Vector3): Vector3 {
@@ -58,7 +77,11 @@ export function normalizeVector(vector: Vector3): Vector3 {
   return length <= EPSILON ? [0, 0, 0] : scaleVector(vector, 1 / length);
 }
 
-export function vectorsEqual(left: Vector3, right: Vector3, epsilon = EPSILON): boolean {
+export function vectorsEqual(
+  left: Vector3,
+  right: Vector3,
+  epsilon = EPSILON,
+): boolean {
   return distance(left, right) <= epsilon;
 }
 
@@ -77,7 +100,8 @@ export function lookRotation(direction: Vector3): Quaternion {
   const target = normalizeVector(direction);
   if (vectorLength(target) <= EPSILON) return [0, 0, 0, 1];
   const forward: Vector3 = [0, 0, -1];
-  const dot = forward[0] * target[0] + forward[1] * target[1] + forward[2] * target[2];
+  const dot =
+    forward[0] * target[0] + forward[1] * target[1] + forward[2] * target[2];
   if (dot < -1 + EPSILON) return [0, 1, 0, 0];
   const cross: Vector3 = [
     forward[1] * target[2] - forward[2] * target[1],
@@ -87,10 +111,18 @@ export function lookRotation(direction: Vector3): Quaternion {
   return normalizeQuaternion([cross[0], cross[1], cross[2], 1 + dot]);
 }
 
-export function slerpQuaternion(start: Quaternion, end: Quaternion, progress: number): Quaternion {
+export function slerpQuaternion(
+  start: Quaternion,
+  end: Quaternion,
+  progress: number,
+): Quaternion {
   const amount = clamp(progress);
   let target: Quaternion = [...end];
-  let cosine = start[0] * target[0] + start[1] * target[1] + start[2] * target[2] + start[3] * target[3];
+  let cosine =
+    start[0] * target[0] +
+    start[1] * target[1] +
+    start[2] * target[2] +
+    start[3] * target[3];
   if (cosine < 0) {
     cosine = -cosine;
     target = [-target[0], -target[1], -target[2], -target[3]];

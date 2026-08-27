@@ -5,6 +5,8 @@ import {
   type RecordedSession,
   type RecordedCalibrationProfile,
   type SessionStatusPayload,
+  type AudioPlaybackEvidence,
+  type AudioExecutionDiagnostic,
 } from '@neuroscape/contracts';
 import type {
   RuntimeStore,
@@ -78,6 +80,8 @@ export class SessionRecorder {
       sessionEvents: [],
       plannerEvents: [],
       adaptiveTrace: [],
+      audioPlaybackEvidence: [],
+      audioExecutionDiagnostics: [],
     };
     this.#unsubscribe = this.#store.subscribe((state, previous) =>
       this.#capture(state, previous),
@@ -102,6 +106,18 @@ export class SessionRecorder {
   appendAdaptiveTrace(record: AdaptiveTraceRecord): void {
     if (this.#recording)
       this.#recording.adaptiveTrace.push(structuredClone(record));
+  }
+  appendAudioPlaybackEvidence(evidence: AudioPlaybackEvidence): void {
+    if (this.#recording)
+      (this.#recording.audioPlaybackEvidence ??= []).push(
+        structuredClone(evidence),
+      );
+  }
+  appendAudioExecutionDiagnostic(diagnostic: AudioExecutionDiagnostic): void {
+    if (this.#recording)
+      (this.#recording.audioExecutionDiagnostics ??= []).push(
+        structuredClone(diagnostic),
+      );
   }
   #capture(state: RuntimeStoreState, previous: RuntimeStoreState): void {
     const output = this.#recording;

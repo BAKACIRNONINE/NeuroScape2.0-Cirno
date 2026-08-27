@@ -16,15 +16,17 @@ export function evaluateEligibility(
 ): EligibilityResult {
   const reasons: string[] = [];
   if (state.phase === 'opening') reasons.push('opening_phase');
-  if (state.phase === 'closing') reasons.push('closing_phase');
-  if (state.timestampMs < transitionUntilMs)
-    reasons.push('transition_in_progress');
+  // An in-progress fade is context for the planners and validator, not a
+  // global prohibition on an independent future adaptation.
   if (state.validEpochCount < config.minimumValidEpochs && !stasisPressure)
     reasons.push('insufficient_valid_epochs');
-  const lastAdaptation = history.at(-1);
+  const lastExperiencedAdaptation = [...history]
+    .reverse()
+    .find((item) => item.experiencedAtMs !== undefined);
   if (
-    lastAdaptation &&
-    state.timestampMs - lastAdaptation.timestampMs < config.adaptationCooldownMs
+    lastExperiencedAdaptation?.experiencedAtMs !== undefined &&
+    state.timestampMs - lastExperiencedAdaptation.experiencedAtMs <
+      config.adaptationCooldownMs
   )
     reasons.push('adaptation_cooldown');
   return {
@@ -43,16 +45,11 @@ export function restrictionsFor(
     (item) => item.scope === 'scene-transition',
   );
   const lastTransition = transitions.at(-1);
-  const lastBodyAnchor = [...history]
-    .reverse()
-    .find((item) => item.assetIds.some((id) => id.startsWith('action.')));
   return {
     allowEvent: state.phase === 'adaptive',
-    allowBodyAnchor:
-      state.phase === 'adaptive' &&
-      (!lastBodyAnchor ||
-        state.timestampMs - lastBodyAnchor.timestampMs >=
-          config.bodyAnchorCooldownMs),
+    // Body/action recency is supplied to Decision 2 as experienced history.
+    // Canonical asset metadata, rather than an asset-ID prefix, owns layers.
+    allowBodyAnchor: state.phase === 'adaptive',
     allowSceneTransition:
       state.phase === 'adaptive' &&
       transitions.length < config.maxSceneTransitions &&

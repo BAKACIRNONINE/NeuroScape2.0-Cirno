@@ -1,5 +1,8 @@
 import type { TransitionCurve } from '@neuroscape/contracts';
-import type { RuntimeEventBus, RuntimeTransitionType } from '../events/RuntimeEvents.js';
+import type {
+  RuntimeEventBus,
+  RuntimeTransitionType,
+} from '../events/RuntimeEvents.js';
 import { clamp, lerp, smoothstep } from '../core/math.js';
 
 export interface RuntimeTransition {
@@ -43,7 +46,14 @@ export class TransitionController {
     durationMs: number,
     curve: TransitionCurve,
   ): string {
-    return this.schedule('gain', targetKey, startValue, targetValue, durationMs, curve);
+    return this.schedule(
+      'gain',
+      targetKey,
+      startValue,
+      targetValue,
+      durationMs,
+      curve,
+    );
   }
 
   scheduleActivation(
@@ -52,7 +62,14 @@ export class TransitionController {
     durationMs: number,
     curve: TransitionCurve,
   ): string {
-    return this.schedule('activation', targetKey, 0, targetValue, durationMs, curve);
+    return this.schedule(
+      'activation',
+      targetKey,
+      0,
+      targetValue,
+      durationMs,
+      curve,
+    );
   }
 
   scheduleRemoval(
@@ -61,7 +78,14 @@ export class TransitionController {
     durationMs: number,
     curve: TransitionCurve,
   ): string {
-    return this.schedule('removal', targetKey, startValue, 0, durationMs, curve);
+    return this.schedule(
+      'removal',
+      targetKey,
+      startValue,
+      0,
+      durationMs,
+      curve,
+    );
   }
 
   update(deltaTimeMs: number): void {
@@ -69,9 +93,14 @@ export class TransitionController {
     this.#timestampMs += deltaTimeMs;
     for (const transition of this.#transitions.values()) {
       if (transition.completed) continue;
-      transition.elapsedMs = Math.min(transition.durationMs, transition.elapsedMs + deltaTimeMs);
+      transition.elapsedMs = Math.min(
+        transition.durationMs,
+        transition.elapsedMs + deltaTimeMs,
+      );
       const linearProgress =
-        transition.durationMs === 0 ? 1 : clamp(transition.elapsedMs / transition.durationMs);
+        transition.durationMs === 0
+          ? 1
+          : clamp(transition.elapsedMs / transition.durationMs);
       transition.value = lerp(
         transition.startValue,
         transition.targetValue,
@@ -94,7 +123,11 @@ export class TransitionController {
   }
 
   getValue(targetKey: string, fallback = 0): number {
-    return this.#transitions.get(targetKey)?.value ?? this.#values.get(targetKey) ?? fallback;
+    return (
+      this.#transitions.get(targetKey)?.value ??
+      this.#values.get(targetKey) ??
+      fallback
+    );
   }
 
   isComplete(targetKey: string): boolean {
@@ -132,10 +165,13 @@ export class TransitionController {
     curve: TransitionCurve,
   ): string {
     if (!Number.isFinite(durationMs) || durationMs < 0) {
-      throw new Error('Transition durationMs must be a non-negative finite number.');
+      throw new Error(
+        'Transition durationMs must be a non-negative finite number.',
+      );
     }
     const existing = this.#transitions.get(targetKey);
-    const startValue = existing?.value ?? this.#values.get(targetKey) ?? requestedStartValue;
+    const startValue =
+      existing?.value ?? this.#values.get(targetKey) ?? requestedStartValue;
     const id = `transition-${this.#nextId++}`;
     const transition: MutableTransition = {
       id,
@@ -173,7 +209,7 @@ export class TransitionController {
 }
 
 function applyCurve(progress: number, curve: TransitionCurve): number {
-  if (curve === 'smoothstep' || curve === 'cubic' || curve === 'catmull-rom') {
+  if (curve === 'smoothstep') {
     return smoothstep(progress);
   }
   return clamp(progress);

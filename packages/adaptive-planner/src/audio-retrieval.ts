@@ -10,7 +10,7 @@ import type {
   PlanningResult,
 } from './types.js';
 
-export const DECISION_2_PROMPT_VERSION = 'decision-2-spatial-contract-v7';
+export const DECISION_2_PROMPT_VERSION = 'decision-2-spatial-contract-v9';
 
 function authoredEventDurationMs(candidate: Decision2Candidate): number {
   const asset = audioLibraryById.get(candidate.assetId);
@@ -60,44 +60,16 @@ function inferCurrentScene(context: DecisionContext): string {
   return (location && locationScene[location]) || 'forest';
 }
 
-function allowedLayers(
-  decision: AdaptationDecision,
-  context: DecisionContext,
-): Set<AudioLibraryAsset['layer']> {
-  if (decision.scope === 'scene-transition') {
-    return new Set(
-      context.restrictions.allowBodyAnchor
-        ? ['ambient', 'event', 'action']
-        : ['ambient', 'event'],
-    );
-  }
-
-  if (decision.goal === 'support-grounding') {
-    return new Set(
-      context.restrictions.allowBodyAnchor
-        ? ['ambient', 'action']
-        : ['ambient'],
-    );
-  }
-
-  if (decision.goal === 'reduce-stimulation') {
-    return new Set(['ambient']);
-  }
-
-  if (
-    decision.goal === 'gently-reorient' &&
-    context.restrictions.allowBodyAnchor
-  ) {
-    return new Set(['ambient', 'event', 'action']);
-  }
-
-  return new Set(['ambient', 'event']);
-}
-
 function candidateFromAsset(
   asset: AudioLibraryAsset,
   appearanceCount: number,
   cooldownRemainingSec: number,
+  active?: {
+    id: string;
+    gain: number;
+    position?: [number, number, number];
+    allowedOperations?: Array<'ADJUST' | 'REPLACE' | 'SUPPRESS'>;
+  },
 ): Decision2Candidate {
   const limits = asset.session_limits;
   const gainProfile = asset.gain_profile;
@@ -153,6 +125,23 @@ function candidateFromAsset(
       asset.narrative_compatibility?.requires_related_active_family != null
         ? [asset.narrative_compatibility.requires_related_active_family]
         : [],
+    gainRange: {
+      min: 0,
+      recommended: asset.recommended_volume,
+      max: gainProfile?.max_safe_gain ?? 1,
+    },
+    currentlyActive: Boolean(active),
+    ...(active
+      ? {
+          activeElementId: active.id,
+          currentGain: active.gain,
+          ...(active.position ? { currentPosition: active.position } : {}),
+          currentLayer: asset.layer,
+        }
+      : {}),
+    allowedOperations: active
+      ? (active.allowedOperations ?? ['ADJUST', 'REPLACE', 'SUPPRESS'])
+      : ['INSERT'],
   };
 }
 
@@ -211,28 +200,89 @@ export function retrieveDecision2Candidates(
   context: DecisionContext,
   decision: AdaptationDecision,
   config: AdaptivePlannerConfig,
-): { currentScene: string; candidates: Decision2Candidate[] } {
+): {
+  currentScene: string;
+  candidates: Decision2Candidate[];
+  eligibleCandidateCount: number;
+  recentlyUsedAssets: import('./types.js').RecentlyUsedAsset[];
+  retrievalAudit: import('./types.js').Decision2RetrievalAudit[];
+} {
   const now = context.state.timestampMs;
   const currentScene = inferCurrentScene(context);
-  const layers = allowedLayers(decision, context);
-  const activeAssets = new Set(
-    [
-      ...context.currentPlan.soundscape.ambient.filter((item) => item.active),
-      ...context.currentPlan.soundscape.action.filter((item) => item.active),
-      ...context.currentPlan.soundscape.event.filter(
-        (item) => now < item.activationTimeMs + item.durationMs,
-      ),
-    ].map((item) => item.assetId),
-  );
-  const recentAssets = new Set(
-    context.history
-      .filter((item) => now - item.timestampMs < config.exactAssetCooldownMs)
-      .flatMap((item) => item.assetIds),
-  );
-  const recentFamilies = new Set(
-    context.history
-      .filter((item) => now - item.timestampMs < config.assetFamilyCooldownMs)
-      .flatMap((item) => item.assetIds.map(audioFamilyId)),
+  const activeAssets = new Map<
+    string,
+    {
+      id: string;
+      gain: number;
+      position?: [number, number, number];
+      allowedOperations?: Array<'ADJUST' | 'REPLACE' | 'SUPPRESS'>;
+    }
+  >();
+  const activeCapabilities = (id: string) => {
+    const authored = context.basePlan?.scheduledElements.find(
+      (element) => element.elementId === id,
+    );
+    if (!authored) return undefined;
+    return [
+      ...(authored.adjustable ? (['ADJUST'] as const) : []),
+      ...(authored.replaceable ? (['REPLACE'] as const) : []),
+      ...(authored.suppressible ? (['SUPPRESS'] as const) : []),
+    ];
+  };
+  context.currentPlan.soundscape.ambient
+    .filter((item) => item.active)
+    .forEach((item) =>
+      activeAssets.set(item.assetId, {
+        id: item.id,
+        gain: item.gain,
+        allowedOperations: activeCapabilities(item.id),
+      }),
+    );
+  context.currentPlan.soundscape.action
+    .filter((item) => item.active)
+    .forEach((item) =>
+      activeAssets.set(item.assetId, {
+        id: item.id,
+        gain: item.gain,
+        position: [...item.relativePosition],
+        allowedOperations: activeCapabilities(item.id),
+      }),
+    );
+  context.currentPlan.soundscape.event
+    .filter(
+      (item) =>
+        item.activationTimeMs <= now &&
+        now < item.activationTimeMs + item.durationMs,
+    )
+    .forEach((item) =>
+      activeAssets.set(item.assetId, {
+        id: item.id,
+        gain: item.gain,
+        allowedOperations: activeCapabilities(item.id),
+      }),
+    );
+  const recentlyUsedById = new Map<
+    string,
+    import('./types.js').RecentlyUsedAsset
+  >();
+  context.history.forEach((item) => {
+    if (item.experiencedAtMs === undefined) return;
+    item.assetIds.forEach((assetId) => {
+      const previous = recentlyUsedById.get(assetId);
+      recentlyUsedById.set(assetId, {
+        assetId,
+        family: audioFamilyId(assetId),
+        lastPlayedMs: Math.max(
+          previous?.lastPlayedMs ?? 0,
+          item.experiencedAtMs!,
+        ),
+        useCount: (previous?.useCount ?? 0) + 1,
+        ...(item.intent ? { lastIntent: item.intent } : {}),
+      });
+    });
+  });
+  const recentlyUsedAssets = [...recentlyUsedById.values()].sort(
+    (left, right) => right.lastPlayedMs - left.lastPlayedMs,
   );
   const desiredTags = goalTags[decision.goal] ?? [];
   const stateTags = new Set([
@@ -252,8 +302,11 @@ export function retrieveDecision2Candidates(
     );
   const appearanceTimes = (assetId: string): number[] => [
     ...context.history
-      .filter((item) => item.assetIds.includes(assetId))
-      .map((item) => item.timestampMs),
+      .filter(
+        (item) =>
+          item.experiencedAtMs !== undefined && item.assetIds.includes(assetId),
+      )
+      .map((item) => item.experiencedAtMs!),
     ...context.currentPlan.soundscape.event
       .filter(
         (item) => item.assetId === assetId && item.activationTimeMs <= now,
@@ -261,24 +314,11 @@ export function retrieveDecision2Candidates(
       .map((item) => item.activationTimeMs),
   ];
 
+  const auditById = new Map<
+    string,
+    import('./types.js').Decision2RetrievalAudit
+  >();
   const scored = audioLibrary
-    .filter(
-      (asset) =>
-        layers.has(asset.layer) &&
-        asset.scene.some((scene) => scene === currentScene) &&
-        !activeAssets.has(asset.asset_id) &&
-        !recentAssets.has(asset.asset_id) &&
-        !recentFamilies.has(audioFamilyId(asset.asset_id)) &&
-        !asset.avoid_when.some((tag) => stateTags.has(tag)) &&
-        (asset.narrative_compatibility?.locations.length
-          ? asset.narrative_compatibility.locations.includes(currentLocation)
-          : true) &&
-        (!asset.narrative_compatibility?.requires_related_active_family ||
-          hasWaterBond) &&
-        (asset.layer !== 'action' ||
-          !asset.tags.includes('footstep') ||
-          decision.scope === 'scene-transition'),
-    )
     .map((asset) => {
       const times = appearanceTimes(asset.asset_id);
       const limits = asset.session_limits;
@@ -293,21 +333,94 @@ export function retrieveDecision2Candidates(
       const limitReached =
         limits?.max_appearances != null &&
         times.length >= limits.max_appearances;
+      const recent = recentlyUsedById.get(asset.asset_id);
+      const familyUses = recentlyUsedAssets
+        .filter((item) => item.family === audioFamilyId(asset.asset_id))
+        .reduce((sum, item) => sum + item.useCount, 0);
+      const exactRecent =
+        recent && now - recent.lastPlayedMs < config.exactAssetCooldownMs;
+      const familyRecent = recentlyUsedAssets.some(
+        (item) =>
+          item.family === audioFamilyId(asset.asset_id) &&
+          now - item.lastPlayedMs < config.assetFamilyCooldownMs,
+      );
+      const basePriorityScore =
+        asset.priority * (asset.selection_weight ?? 1);
+      const intentTagScore =
+        asset.use_when.filter((tag) => stateTags.has(tag)).length * 2;
+      const qualityPenalty =
+        asset.quality_tier === 'limited_use' ? 1.5 : 0;
+      const recencyPenalty = (exactRecent ? 2 : 0) + (familyRecent ? 1 : 0);
+      const repetitionPenalty =
+        Math.min(recent?.useCount ?? 0, 3) * 0.75 +
+        Math.min(familyUses, 3) * 0.25;
+      const contextPenalty =
+        (asset.scene.includes(currentScene as 'forest' | 'ocean_beach')
+          ? 0
+          : 3) +
+        (asset.avoid_when.some((tag) => stateTags.has(tag)) ? 2 : 0) +
+        (asset.narrative_compatibility?.locations.length &&
+        !asset.narrative_compatibility.locations.includes(currentLocation)
+          ? 1.5
+          : 0) +
+        (asset.narrative_compatibility?.requires_related_active_family &&
+        !hasWaterBond
+          ? 2
+          : 0);
+      const finalScore =
+        basePriorityScore +
+        intentTagScore -
+        asset.suddenness -
+        asset.intensity * 0.25 -
+        qualityPenalty -
+        recencyPenalty -
+        repetitionPenalty -
+        contextPenalty;
+      const intervalValid =
+        last == null ||
+        now - last >
+          (limits?.min_interval_sec_exclusive ?? -1) * 1_000;
+      const technicallyValid =
+        !limitReached && cooldownRemainingSec === 0 && intervalValid;
+      auditById.set(asset.asset_id, {
+        assetId: asset.asset_id,
+        technicallyValid,
+        filteringStages: [
+          'canonical_asset',
+          'runtime_layer_supported',
+          ...(limitReached ? ['session_appearance_limit'] : []),
+          ...(cooldownRemainingSec > 0 ? ['session_interval_limit'] : []),
+          ...(asset.scene.includes(currentScene as 'forest' | 'ocean_beach')
+            ? ['scene_match']
+            : ['scene_mismatch_soft_penalty']),
+          ...(activeAssets.has(asset.asset_id)
+            ? ['active_asset_exposed_for_modification']
+            : []),
+        ],
+        basePriorityScore,
+        intentTagScore,
+        qualityPenalty,
+        recencyPenalty,
+        repetitionPenalty,
+        finalScore,
+        currentlyActive: activeAssets.has(asset.asset_id),
+        ...(recent ? { lastPlayedMs: recent.lastPlayedMs } : {}),
+        useCount: recent?.useCount ?? 0,
+        includedInFinalCandidates: false,
+        ...(!technicallyValid
+          ? {
+              exclusionReason: limitReached
+                ? 'session_appearance_limit'
+                : 'session_interval_limit',
+            }
+          : {}),
+      });
       return {
         asset,
         appearanceCount: times.length,
         cooldownRemainingSec,
-        legal:
-          !limitReached &&
-          cooldownRemainingSec === 0 &&
-          (last == null ||
-            now - last > (limits?.min_interval_sec_exclusive ?? -1) * 1_000),
-        score:
-          asset.priority * (asset.selection_weight ?? 1) +
-          asset.use_when.filter((tag) => stateTags.has(tag)).length * 2 -
-          asset.suddenness -
-          asset.intensity * 0.25 -
-          (asset.quality_tier === 'limited_use' ? 1.5 : 0),
+        legal: technicallyValid,
+        score: finalScore,
       };
     })
     .filter((item) => item.legal)
@@ -327,10 +440,28 @@ export function retrieveDecision2Candidates(
       perLayer.set(asset.layer, count + 1);
       return true;
     })
-    .map(({ asset, appearanceCount, cooldownRemainingSec }) =>
-      candidateFromAsset(asset, appearanceCount, cooldownRemainingSec),
-    );
-  return { currentScene, candidates };
+    .map(({ asset, appearanceCount, cooldownRemainingSec }) => {
+      auditById.get(asset.asset_id)!.includedInFinalCandidates = true;
+      return candidateFromAsset(
+        asset,
+        appearanceCount,
+        cooldownRemainingSec,
+        activeAssets.get(asset.asset_id),
+      );
+    });
+  scored
+    .filter(({ asset }) => !candidates.some((c) => c.assetId === asset.asset_id))
+    .forEach(({ asset }) => {
+      const audit = auditById.get(asset.asset_id)!;
+      audit.exclusionReason ??= 'top_k_limit';
+    });
+  return {
+    currentScene,
+    candidates,
+    eligibleCandidateCount: scored.length,
+    recentlyUsedAssets,
+    retrievalAudit: audioLibrary.map((asset) => auditById.get(asset.asset_id)!),
+  };
 }
 
 export function buildDecision2Prompt(
@@ -339,6 +470,7 @@ export function buildDecision2Prompt(
   currentScene: string,
   candidates: readonly Decision2Candidate[],
   operationGuidance: OperationGuidance,
+  recentlyUsedAssets: readonly import('./types.js').RecentlyUsedAsset[] = [],
 ): string {
   const currentLocation =
     context.currentPlan.userJourney.waypoints.at(-1)?.locationId ?? 'clearing';
@@ -411,6 +543,7 @@ export function buildDecision2Prompt(
       ),
       operationGuidance,
       restrictions: context.restrictions,
+      recentlyUsedAssets,
     },
     relevantPriorOutcomes: context.relevantPriorOutcomes?.slice(0, 3) ?? [],
     candidates,
@@ -438,14 +571,18 @@ export function buildDecision2Prompt(
     '- reduce-stimulation: remove or reduce event/action activity; do not add a salient cue merely to create change.',
     '- support-sustained-focus: make a minimal continuous within-scene evolution; preserve meditation continuity and avoid framing the change as correction.',
     '- preserve-recovery: normally preserve the current plan; if Decision 1 requested adaptation, use only a minimal continuity-preserving adjustment.',
+    'These goal-to-layer relationships are semantic preferences, not hard exclusions. Any supplied layer remains possible when Decision 2 gives a coherent low-risk justification consistent with Decision 1.',
     'If the most recent adaptation selected only ambient assets, prioritize an eligible event or action in this patch instead of making another ambient-only change.',
     'At least one newly selected asset should create an actually audible source change; do not claim adaptation while merely restating the current plan.',
+    'Candidates marked currentlyActive are modification targets, not INSERT choices. Use their activeElementId and allowedOperations to ADJUST, REPLACE, or SUPPRESS without duplicating the source.',
     'Use only assetId values in candidates. Never invent an asset, location, motion, duration, gain, or numerical range.',
-    'Treat candidate summaries as authoritative. Do not override their resolved recommendedVolume, authored duration, playback contract, limits, compatibility, or quality attenuation.',
+    'Treat candidate summaries as authoritative. Choose gain within gainRange, using recommended as the default reference; do not exceed max. Do not override authored duration, playback contract, technical limits, or quality attenuation.',
+    'Explicitly declare a supported distancePolicy (none or bounded inverse) and playback for every inserted sound. Also declare activationCondition for Actions and interpolation plus trajectoryUpdatePolicy for Events. These fields are authoritative downstream.',
     'When executionContext.calibrationFallback.active is true, do not optimize against EEG position or trajectory. Optimize the system soundscape itself: preserve a stable primary ambient foundation, allow at most one clearly subordinate supporting ambient role, keep body/action cues intentional, keep events sparse and foregrounded only briefly, and avoid simultaneous competition between layers.',
     'In calibration fallback mode, rank compatible candidates by authored quality and system suitability: prefer qualityTier=preferred, then standard, and use limited_use only when no safer compatible candidate fills the required role. Use priority, selectionWeight, qualityAttenuation, recommendedVolume, suddenness, and intensity together; never replace a coherent layer with a lower-quality asset merely to create change.',
     'For an event, durationMs MUST equal defaultMotion.durationSec * 1000 when defaultMotion.durationSec is non-null; otherwise it MUST equal autoDeleteAfterSec * 1000. autoDeleteAfterSec is only the fallback lifecycle when no authored motion duration exists. A looping asset may remain active until a later patch removes it.',
     'Prefer an unused compatible variant and respect the already-applied exact-asset and family cooldown filtering.',
+    'Use recentlyUsedAssets as actual participant-experience history: when multiple candidates are equally appropriate, prefer a perceptually distinct candidate that was heard less recently or less often. Reuse remains allowed when it is clearly the strongest semantic choice; never add randomness merely for novelty.',
     'Add at most one new salient event in one patch. Event-source movement is not listener movement. A body-anchored action does not require a scene transition. Footsteps imply listener movement only when explicitly assigned a locomotion role.',
     'For within-scene adaptation, preserve the listener location and semantic scene. For scene-transition scope, preserve narrative continuity and use only scene-compatible candidates.',
     'Journey waypoints must use only reachableLocations. Sound-source waypoints must use only soundSourceLocationIds.',
@@ -482,6 +619,73 @@ export function buildDecision2OutputSchema(
     minItems: 3,
     maxItems: 3,
   };
+  const distancePolicy = {
+    anyOf: [
+      {
+        type: 'object',
+        additionalProperties: false,
+        required: ['mode'],
+        properties: { mode: { type: 'string', enum: ['none'] } },
+      },
+      {
+        type: 'object',
+        additionalProperties: false,
+        required: ['mode', 'referenceDistance', 'maxDistance', 'minGain'],
+        properties: {
+          mode: { type: 'string', enum: ['inverse'] },
+          referenceDistance: {
+            type: 'number',
+            exclusiveMinimum: 0,
+            maximum: 100,
+          },
+          maxDistance: {
+            type: 'number',
+            exclusiveMinimum: 0,
+            maximum: 10_000,
+          },
+          minGain: { type: 'number', minimum: 0, maximum: 1 },
+        },
+      },
+    ],
+  };
+  const playbackPolicy = (candidate: Decision2Candidate) => {
+    const authored = audioLibraryById.get(candidate.assetId)?.playback_contract;
+    const mode =
+      authored?.mode === 'burst' ? 'repeat' : candidate.loop ? 'loop' : 'once';
+    const properties: Record<string, unknown> = {
+      mode: { type: 'string', enum: [mode] },
+      durationPolicy: {
+        type: 'string',
+        enum: [mode === 'loop' ? 'loop-until-end' : 'truncate-at-end'],
+      },
+    };
+    const required = ['mode', 'durationPolicy'];
+    if (mode === 'repeat') {
+      properties.repeatCount = {
+        type: 'number',
+        enum: authored?.repeat_count_options ?? [1],
+      };
+      properties.repeatGapMs = {
+        type: 'number',
+        enum: [(authored?.inter_repeat_gap_sec ?? 0) * 1_000],
+      };
+      properties.perRepeatGain = {
+        type: 'array',
+        items: {
+          type: 'number',
+          minimum: candidate.gainRange.min,
+          maximum: candidate.gainRange.max,
+        },
+      };
+      required.push('repeatCount', 'repeatGapMs', 'perRepeatGain');
+    }
+    return {
+      type: 'object',
+      additionalProperties: false,
+      required,
+      properties,
+    };
+  };
   const emptyItemSchema = {
     type: 'object',
     additionalProperties: false,
@@ -493,7 +697,16 @@ export function buildDecision2OutputSchema(
         anyOf: ambientCandidates.map((candidate) => ({
           type: 'object',
           additionalProperties: false,
-          required: ['id', 'assetId', 'mode', 'locationId', 'gain', 'active'],
+          required: [
+            'id',
+            'assetId',
+            'mode',
+            'locationId',
+            'gain',
+            'active',
+            'distancePolicy',
+            'playback',
+          ],
           properties: {
             id: { type: 'string' },
             assetId: { type: 'string', enum: [candidate.assetId] },
@@ -504,8 +717,14 @@ export function buildDecision2OutputSchema(
                 { type: 'string', enum: sourceLocations },
               ],
             },
-            gain: { type: 'number', enum: [candidate.recommendedVolume] },
+            gain: {
+              type: 'number',
+              minimum: candidate.gainRange.min,
+              maximum: candidate.gainRange.max,
+            },
             active: { type: 'boolean' },
+            distancePolicy,
+            playback: playbackPolicy(candidate),
           },
         })),
       }
@@ -522,6 +741,9 @@ export function buildDecision2OutputSchema(
             'relativePosition',
             'gain',
             'active',
+            'activationCondition',
+            'distancePolicy',
+            'playback',
           ],
           properties: {
             id: { type: 'string' },
@@ -531,8 +753,18 @@ export function buildDecision2OutputSchema(
               enum: ['head', 'chest', 'feet', 'body'],
             },
             relativePosition: vector3,
-            gain: { type: 'number', enum: [candidate.recommendedVolume] },
+            gain: {
+              type: 'number',
+              minimum: candidate.gainRange.min,
+              maximum: candidate.gainRange.max,
+            },
             active: { type: 'boolean' },
+            activationCondition: {
+              type: 'string',
+              enum: ['always', 'listener-moving'],
+            },
+            distancePolicy,
+            playback: playbackPolicy(candidate),
           },
         })),
       }
@@ -549,6 +781,10 @@ export function buildDecision2OutputSchema(
             'durationMs',
             'trajectory',
             'gain',
+            'interpolation',
+            'trajectoryUpdatePolicy',
+            'distancePolicy',
+            'playback',
           ],
           properties: {
             id: { type: 'string' },
@@ -574,8 +810,19 @@ export function buildDecision2OutputSchema(
             },
             gain: {
               type: 'number',
-              enum: [candidate.recommendedVolume],
+              minimum: candidate.gainRange.min,
+              maximum: candidate.gainRange.max,
             },
+            interpolation: { type: 'string', enum: ['linear', 'smoothstep'] },
+            trajectoryUpdatePolicy: {
+              type: 'string',
+              enum: [
+                'replace-at-effective-time',
+                'continue-from-current-position',
+              ],
+            },
+            distancePolicy,
+            playback: playbackPolicy(candidate),
           },
         })),
       }
@@ -774,7 +1021,13 @@ export function prepareDecision2Input(
   decision: AdaptationDecision,
   config: AdaptivePlannerConfig,
 ): Decision2Input {
-  const { currentScene, candidates } = retrieveDecision2Candidates(
+  const {
+    currentScene,
+    candidates,
+    eligibleCandidateCount,
+    recentlyUsedAssets,
+    retrievalAudit,
+  } = retrieveDecision2Candidates(
     context,
     decision,
     config,
@@ -790,10 +1043,16 @@ export function prepareDecision2Input(
       currentScene,
       candidates,
       operationGuidance,
+      recentlyUsedAssets,
     ),
     outputSchema: buildDecision2OutputSchema(candidates, context),
     reasoningEffort: assessPatchComplexity(context, decision),
     operationGuidance,
+    fullLibrarySize: audioLibrary.length,
+    eligibleCandidateCount,
+    retrievedCandidateIds: candidates.map((candidate) => candidate.assetId),
+    recentlyUsedAssets,
+    retrievalAudit,
   };
 }
 
@@ -887,15 +1146,13 @@ export function validateDecision2Selection(
     ...(result.patch.upsertAmbient ?? []),
     ...(result.patch.upsertAction ?? []),
     ...(result.patch.upsertEvent ?? []),
-  ].filter(
-    (item) =>
-      Math.abs(
-        item.gain - (candidateById.get(item.assetId)?.recommendedVolume ?? -1),
-      ) > 1e-6,
-  );
+  ].filter((item) => {
+    const range = candidateById.get(item.assetId)?.gainRange;
+    return !range || item.gain < range.min || item.gain > range.max;
+  });
   if (gainErrors.length)
     throw new Error(
-      `Decision 2 must use authored recommendedVolume: ${gainErrors.map((item) => item.assetId).join(', ')}`,
+      `Decision 2 gain exceeds the authored safe range: ${gainErrors.map((item) => item.assetId).join(', ')}`,
     );
   const durationErrors = (result.patch.upsertEvent ?? []).filter((item) => {
     const candidate = candidateById.get(item.assetId);

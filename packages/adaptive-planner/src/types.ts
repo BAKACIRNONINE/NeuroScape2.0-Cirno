@@ -103,6 +103,7 @@ export interface AdaptationRestrictions {
 }
 
 export interface AdaptationHistoryItem {
+  adaptationId?: string;
   timestampMs: number;
   goal: AdaptationGoal;
   scope: AdaptationScope;
@@ -110,6 +111,16 @@ export interface AdaptationHistoryItem {
   rationale: string;
   intent?: AdaptationIntent;
   salience?: AdaptationSalience;
+  /** Set only after at least one sound belonging to this adaptation started. */
+  experiencedAtMs?: number;
+}
+
+export interface RecentlyUsedAsset {
+  assetId: string;
+  family: string;
+  lastPlayedMs: number;
+  useCount: number;
+  lastIntent?: AdaptationIntent;
 }
 
 export function reasoningAttentionState(state: AttentionState) {
@@ -264,6 +275,30 @@ export interface Decision2Candidate {
   qualityAttenuation: number;
   playbackContractSummary: string;
   compatibleEnvironmentalBonds: string[];
+  gainRange: { min: number; recommended: number; max: number };
+  currentlyActive: boolean;
+  activeElementId?: string;
+  currentGain?: number;
+  currentPosition?: [number, number, number];
+  currentLayer?: 'ambient' | 'event' | 'action';
+  allowedOperations: Array<'ADJUST' | 'REPLACE' | 'SUPPRESS' | 'INSERT'>;
+}
+
+export interface Decision2RetrievalAudit {
+  assetId: string;
+  technicallyValid: boolean;
+  filteringStages: string[];
+  basePriorityScore: number;
+  intentTagScore: number;
+  qualityPenalty: number;
+  recencyPenalty: number;
+  repetitionPenalty: number;
+  finalScore: number;
+  currentlyActive: boolean;
+  lastPlayedMs?: number;
+  useCount: number;
+  includedInFinalCandidates: boolean;
+  exclusionReason?: string;
 }
 
 export interface OperationGuidance {
@@ -285,6 +320,20 @@ export interface Decision2Input {
   candidates: Decision2Candidate[];
   reasoningEffort: 'low' | 'medium';
   operationGuidance: OperationGuidance;
+  fullLibrarySize: number;
+  eligibleCandidateCount: number;
+  retrievedCandidateIds: string[];
+  recentlyUsedAssets: RecentlyUsedAsset[];
+  retrievalAudit: Decision2RetrievalAudit[];
+}
+
+export interface AdaptationTimingTrace {
+  decision1RequestStartMs?: number;
+  decision1ResponseMs?: number;
+  decision2RequestStartMs?: number;
+  decision2ResponseMs?: number;
+  patchValidationCompleteMs?: number;
+  planAppliedMs?: number;
 }
 
 export interface DecisionProvider {
@@ -309,4 +358,13 @@ export interface AdaptiveCheckpointResult {
   patchValidation?: PatchValidationResult;
   lifecycle?: AdaptationLifecycle;
   outcome?: AdaptationOutcome;
+  timing: AdaptationTimingTrace;
+  selectionTrace?: {
+    fullLibrarySize: number;
+    eligibleCandidateCount: number;
+    retrievedCandidateIds: string[];
+    recentlyUsedAssetIds: string[];
+    selectedAssetIds?: string[];
+    retrievalAudit: Decision2RetrievalAudit[];
+  };
 }

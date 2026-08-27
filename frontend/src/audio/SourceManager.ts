@@ -1,28 +1,34 @@
 import {
-  audioLibraryById,
   type ListenerState,
   type Quaternion,
   type RuntimeWorldState,
   type Vector3,
+  type PlaybackPolicy,
+  type AudioPlaybackEvidence,
+  type AudioExecutionDiagnostic,
+  type AudioPlaybackEndReason,
 } from '@neuroscape/contracts';
-import type {
-  AudioAssetError,
-  AudioAssetManager,
-} from './AudioAssetManager.js';
+import { AudioAssetError } from './AudioAssetManager.js';
+import type { AudioAssetManager } from './AudioAssetManager.js';
 import type { GainManager } from './GainManager.js';
 import type { HRTFRenderer, SpatialDiagnostics } from './HRTFRenderer.js';
 import type { PlaybackScheduler, PlaybackTarget } from './PlaybackScheduler.js';
 
 export type SourceCategory =
   'globalAmbient' | 'localizedAmbient' | 'action' | 'event';
-const AMBIENT_OUTPUT_GAIN = 0.2;
 export interface RuntimeSound {
   id: string;
+  adaptationId?: string;
   assetId: string;
   gain: number;
   active: boolean;
   worldPosition?: Vector3;
   lifecycle?: 'waiting' | 'active' | 'finished';
+  playback?: PlaybackPolicy;
+  plannedStartMs?: number;
+  runtimeActivationMs?: number;
+  plannedEndMs?: number;
+  runtimeFinishedMs?: number;
 }
 export interface ManagedSource extends PlaybackTarget {
   key: string;
@@ -35,6 +41,17 @@ export interface ManagedSource extends PlaybackTarget {
   error?: AudioAssetError;
   diagnostics?: SpatialDiagnostics;
   generation: number;
+  plannedStartMs?: number;
+  runtimeActivationMs?: number;
+  audioStartMs?: number;
+  audioStartAudioTime?: number;
+  desiredActive: boolean;
+  adaptationId?: string;
+  plannedEndMs?: number;
+  runtimeFinishedMs?: number;
+  runtimeActivationPublished: boolean;
+  audioStartedPublished: boolean;
+  audioFinishedPublished: boolean;
 }
 export interface AudioSourceDiagnostics extends SpatialDiagnostics {
   runtimeId: string;
@@ -42,6 +59,11 @@ export interface AudioSourceDiagnostics extends SpatialDiagnostics {
   category: SourceCategory;
   playbackState: ManagedSource['playbackState'];
   gain: number;
+  plannedStartMs?: number;
+  runtimeActivationMs?: number;
+  audioStartMs?: number;
+  errorCode?: string;
+  errorMessage?: string;
 }
 
 export class SourceManager {
@@ -53,6 +75,9 @@ export class SourceManager {
   readonly #playback: PlaybackScheduler;
   readonly #hrtf: HRTFRenderer;
   readonly #onChange: () => void;
+  readonly #onEvidence: (evidence: AudioPlaybackEvidence) => void;
+  readonly #onDiagnostic: (diagnostic: AudioExecutionDiagnostic) => void;
+  #latestTimestampMs = 0;
 
   constructor(
     context: BaseAudioContext,
@@ -62,6 +87,8 @@ export class SourceManager {
     playback: PlaybackScheduler,
     hrtf: HRTFRenderer,
     onChange: () => void = () => undefined,
+    onEvidence: (evidence: AudioPlaybackEvidence) => void = () => undefined,
+    onDiagnostic: (diagnostic: AudioExecutionDiagnostic) => void = () => undefined,
   ) {
     this.#context = context;
     this.#master = master;
@@ -70,9 +97,12 @@ export class SourceManager {
     this.#playback = playback;
     this.#hrtf = hrtf;
     this.#onChange = onChange;
+    this.#onEvidence = onEvidence;
+    this.#onDiagnostic = onDiagnostic;
   }
 
   reconcile(state: Readonly<RuntimeWorldState>): void {
+    this.#latestTimestampMs = state.timestampMs;
     const desired = new Map<
       string,
       { category: SourceCategory; sound: RuntimeSound }
@@ -94,33 +124,38 @@ export class SourceManager {
       desired.set(`event:${sound.id}`, { category: 'event', sound }),
     );
     for (const [key, source] of this.sources)
-      if (!desired.has(key)) this.#release(key, source);
+      if (!desired.has(key)) this.#release(key, source, 'cancelled');
     desired.forEach(({ category, sound }, key) =>
       this.#update(key, category, sound, state.listener, state.timestampMs),
     );
   }
 
   diagnostics(): AudioSourceDiagnostics[] {
-    return [...this.sources.values()]
-      .filter(
-        (
-          source,
-        ): source is ManagedSource & { diagnostics: SpatialDiagnostics } =>
-          Boolean(source.diagnostics),
-      )
-      .map((source) => ({
-        ...source.diagnostics,
+    return [...this.sources.values()].map((source) => ({
+        ...(source.diagnostics ?? {
+          relativePosition: [0, 0, 0] as Vector3,
+          listenerSpacePosition: [0, 0, 0] as Vector3,
+          azimuthDegrees: 0,
+          elevationDegrees: 0,
+          distance: 0,
+        }),
         runtimeId: source.runtimeId,
         assetId: source.assetId,
         category: source.category,
         playbackState: source.playbackState,
         gain: source.gainNode.gain.value,
+        plannedStartMs: source.plannedStartMs,
+        runtimeActivationMs: source.runtimeActivationMs,
+        audioStartMs: source.audioStartMs,
+        errorCode: source.error?.code,
+        errorMessage: source.error?.message,
       }));
   }
 
   dispose(): void {
-    this.#playback.dispose(this.sources.values());
-    [...this.sources].forEach(([key, source]) => this.#release(key, source));
+    [...this.sources].forEach(([key, source]) =>
+      this.#release(key, source, 'session_ended'),
+    );
   }
 
   #create(
@@ -145,9 +180,14 @@ export class SourceManager {
       activationPlayed: false,
       playbackState: 'idle',
       generation: 0,
+      desiredActive: false,
+      runtimeActivationPublished: false,
+      audioStartedPublished: false,
+      audioFinishedPublished: false,
     };
     source.onPlaybackEnded = () => {
       source.playbackState = 'stopped';
+      this.#publishFinished(source, 'natural');
       this.#onChange();
     };
     this.sources.set(key, source);
@@ -167,19 +207,28 @@ export class SourceManager {
       source = undefined;
     }
     source ??= this.#create(key, category, sound);
-    const outputGain =
-      category === 'globalAmbient' || category === 'localizedAmbient'
-        ? sound.gain * AMBIENT_OUTPUT_GAIN
-        : sound.gain;
-    const asset = audioLibraryById.get(sound.assetId);
-    const naturalVariation = asset?.playback_contract?.requires_gain_motion
-      ? 0.92 + (this.#stableHash(sound.id) % 9) / 100
-      : 1;
-    const resolvedGain =
-      Math.min(
-        outputGain * (asset?.gain_profile?.quality_attenuation ?? 1),
-        asset?.gain_profile?.max_safe_gain ?? 1,
-      ) * naturalVariation;
+    if (source.adaptationId !== sound.adaptationId) {
+      source.adaptationId = sound.adaptationId;
+      source.runtimeActivationPublished = false;
+      source.audioStartedPublished = false;
+      source.audioFinishedPublished = false;
+      source.audioStartMs = undefined;
+    }
+    source.plannedStartMs = sound.plannedStartMs;
+    source.runtimeActivationMs = sound.runtimeActivationMs;
+    source.plannedEndMs = sound.plannedEndMs;
+    source.runtimeFinishedMs = sound.runtimeFinishedMs;
+    if (
+      source.adaptationId &&
+      source.runtimeActivationMs !== undefined &&
+      !source.runtimeActivationPublished
+    ) {
+      source.runtimeActivationPublished = true;
+      this.#publish(source, 'RUNTIME_ACTIVATED', source.runtimeActivationMs);
+    }
+    // Safety and authoring constraints belong in deterministic validation. At
+    // this boundary the validated runtime gain is authoritative.
+    const resolvedGain = sound.gain;
     this.#gains.apply(
       source.gainNode.gain,
       resolvedGain,
@@ -196,11 +245,44 @@ export class SourceManager {
       );
     }
     const shouldPlay =
-      sound.active && (category !== 'event' || sound.lifecycle === 'active');
+      sound.active &&
+      sound.lifecycle !== 'waiting' &&
+      sound.lifecycle !== 'finished';
+    source.desiredActive = shouldPlay;
+    if (
+      shouldPlay &&
+      source.playing &&
+      source.adaptationId &&
+      !source.audioStartedPublished
+    ) {
+      source.audioStartMs = timestampMs;
+      source.audioStartAudioTime = this.#context.currentTime;
+      source.audioStartedPublished = true;
+      this.#publish(source, 'AUDIO_STARTED', timestampMs);
+    }
     if (!shouldPlay) {
+      if (source.playbackState === 'loading') source.generation += 1;
+      if (source.playing)
+        this.#publishFinished(
+          source,
+          sound.lifecycle === 'finished' ? 'planned_end' : 'cancelled',
+          timestampMs,
+        );
       this.#playback.stop(source, this.#context.currentTime);
       this.#playback.resetActivation(source);
       source.playbackState = 'stopped';
+      return;
+    }
+    const playback = sound.playback;
+    if (!playback) {
+      source.playbackState = 'error';
+      source.error = new AudioAssetError(
+        'INVALID_PLAYBACK_POLICY',
+        sound.assetId,
+        `Validated playback policy missing for ${key}.`,
+      );
+      this.#publishFailure(source, source.error, timestampMs);
+      this.#onChange();
       return;
     }
     if (
@@ -213,71 +295,59 @@ export class SourceManager {
       return;
     source.playbackState = 'loading';
     const generation = ++source.generation;
+    const loadRequestedAtAudioTime = this.#context.currentTime;
     void this.#assets.load(sound.assetId).then((result) => {
       if (source?.generation !== generation || this.sources.get(key) !== source)
         return;
+      if (!source.desiredActive) return;
       if (!result.ok) {
         source.playbackState = 'error';
         source.error = result.error;
+        this.#publishFailure(
+          source,
+          result.error,
+          this.#sessionNow(timestampMs, loadRequestedAtAudioTime),
+        );
         this.#onChange();
         return;
       }
-      const contract = asset?.playback_contract;
       const startAt = this.#audioTimeFor(timestampMs);
-      if (
-        category === 'event' &&
-        contract?.envelope_kind === 'proportional_one_shot'
-      ) {
-        const duration = Math.min(
-          result.buffer.duration,
-          contract.resolved_lifecycle_sec ?? result.buffer.duration,
-        );
-        this.#gains.applyEnvelope(
-          source.gainNode.gain,
-          resolvedGain,
-          startAt,
-          duration,
-          Math.min(asset?.fade_in_sec ?? 0, duration * 0.4),
-          Math.min(asset?.fade_out_sec ?? 0, duration * 0.4),
-        );
-      }
       const started =
-        category === 'event' && contract?.mode === 'burst'
+        playback.mode === 'repeat'
           ? this.#playback.startBurst(
               source,
               result.buffer,
               startAt,
-              this.#deterministicRepeatCount(
-                sound.id,
-                contract.repeat_count_options,
-              ),
-              contract.inter_repeat_gap_sec,
+              playback.repeatCount!,
+              playback.repeatGapMs! / 1_000,
             )
           : this.#playback.start(
               source,
               result.buffer,
-              category !== 'event' && contract?.loop_strategy !== 'no_loop',
+              playback.mode === 'loop' ||
+                playback.durationPolicy === 'loop-until-end',
               startAt,
             );
-      if (started && category === 'event' && contract?.mode === 'burst') {
-        const repeatCount = this.#deterministicRepeatCount(
-          sound.id,
-          contract.repeat_count_options,
-        );
-        const gains = this.#burstGainSequence(
-          sound.id,
-          resolvedGain,
-          repeatCount,
-        );
+      if (started && playback.mode === 'repeat' && playback.perRepeatGain) {
         this.#gains.applyBurstSequence(
           source.gainNode.gain,
-          gains,
+          playback.perRepeatGain,
           startAt,
           result.buffer.duration,
-          contract.inter_repeat_gap_sec,
+          playback.repeatGapMs! / 1_000,
         );
       }
-      if (started) source.playbackState = 'playing';
+      if (started) {
+        source.playbackState = 'playing';
+        source.audioStartMs = Math.max(
+          this.#latestTimestampMs,
+          timestampMs +
+            (this.#context.currentTime - loadRequestedAtAudioTime) * 1_000,
+        );
+        source.audioStartAudioTime = this.#context.currentTime;
+        source.audioStartedPublished = true;
+        this.#publish(source, 'AUDIO_STARTED', source.audioStartMs);
+      }
       this.#onChange();
     });
   }
@@ -287,39 +357,96 @@ export class SourceManager {
     return this.#context.currentTime;
   }
 
-  #deterministicRepeatCount(id: string, options: readonly number[]): number {
-    const legal = options.filter((count) => count === 2 || count === 3);
-    if (!legal.length) return 2;
-    const hash = [...id].reduce(
-      (sum, character) => sum + character.charCodeAt(0),
-      0,
-    );
-    return legal[hash % legal.length]!;
-  }
-
-  #stableHash(id: string): number {
-    return [...id].reduce(
-      (sum, character) => (sum * 31 + character.charCodeAt(0)) >>> 0,
-      0,
+  #sessionNow(
+    baseTimestampMs = this.#latestTimestampMs,
+    baseAudioTime = this.#context.currentTime,
+  ): number {
+    return Math.max(
+      this.#latestTimestampMs,
+      baseTimestampMs + (this.#context.currentTime - baseAudioTime) * 1_000,
     );
   }
 
-  #burstGainSequence(id: string, peak: number, repeatCount: number): number[] {
-    const hash = [...id].reduce(
-      (sum, character) => sum + character.charCodeAt(0),
-      0,
-    );
-    if (repeatCount === 3)
-      return hash % 3 === 0
-        ? [peak * 0.65, peak, peak * 0.65]
-        : hash % 2 === 0
-          ? [peak * 0.6, peak * 0.8, peak]
-          : [peak, peak * 0.8, peak * 0.6];
-    return hash % 2 === 0 ? [peak * 0.7, peak] : [peak, peak * 0.7];
+  #publish(
+    source: ManagedSource,
+    status: AudioPlaybackEvidence['status'],
+    timestampMs: number,
+    extra: Partial<AudioPlaybackEvidence> = {},
+  ): void {
+    const layer =
+      source.category === 'globalAmbient' ||
+      source.category === 'localizedAmbient'
+        ? 'ambient'
+        : source.category;
+    this.#onDiagnostic({
+      adaptationId: source.adaptationId,
+      sourceId: source.runtimeId,
+      assetId: source.assetId,
+      layer,
+      playbackState:
+        status === 'AUDIO_FAILED'
+          ? 'error'
+          : status === 'AUDIO_STARTED'
+            ? 'playing'
+            : 'stopped',
+      timestampMs,
+      audioStartMs: source.audioStartMs,
+      audioEndMs: extra.audioEndMs,
+      errorCode: extra.failureCode,
+      errorMessage: extra.failureReason,
+    });
+    if (!source.adaptationId) return;
+    this.#onEvidence({
+      adaptationId: source.adaptationId,
+      elementId: source.runtimeId,
+      assetId: source.assetId,
+      layer,
+      status,
+      timestampMs,
+      plannedStartMs: source.plannedStartMs,
+      runtimeActivationMs: source.runtimeActivationMs,
+      audioStartMs: source.audioStartMs,
+      plannedEndMs: source.plannedEndMs,
+      runtimeFinishedMs: source.runtimeFinishedMs,
+      ...extra,
+    });
   }
 
-  #release(key: string, source: ManagedSource): void {
+  #publishFinished(
+    source: ManagedSource,
+    endReason: AudioPlaybackEndReason,
+    timestampMs = source.audioStartMs !== undefined &&
+    source.audioStartAudioTime !== undefined
+      ? source.audioStartMs +
+        (this.#context.currentTime - source.audioStartAudioTime) * 1_000
+      : this.#sessionNow(),
+  ): void {
+    if (!source.audioStartedPublished || source.audioFinishedPublished) return;
+    source.audioFinishedPublished = true;
+    this.#publish(source, 'AUDIO_FINISHED', timestampMs, {
+      audioEndMs: timestampMs,
+      endReason,
+    });
+  }
+
+  #publishFailure(
+    source: ManagedSource,
+    error: AudioAssetError,
+    timestampMs: number,
+  ): void {
+    this.#publish(source, 'AUDIO_FAILED', timestampMs, {
+      failureCode: error.code,
+      failureReason: error.message,
+    });
+  }
+
+  #release(
+    key: string,
+    source: ManagedSource,
+    endReason: AudioPlaybackEndReason = 'replaced',
+  ): void {
     source.generation += 1;
+    if (source.playing) this.#publishFinished(source, endReason);
     this.#playback.stop(source, this.#context.currentTime);
     source.gainNode.disconnect();
     if (source.spatializer) this.#hrtf.release(key, source.spatializer);

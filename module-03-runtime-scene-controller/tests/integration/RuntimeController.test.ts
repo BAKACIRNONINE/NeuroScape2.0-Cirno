@@ -33,14 +33,18 @@ describe('RuntimeController Phase 2 integration', () => {
 
     expect(controller.currentState!.listener.worldPosition).toEqual(before);
     expect(controller.update(0).listener.worldPosition).toEqual(before);
-    expect(controller.update(100).listener.worldPosition).not.toEqual([0, 0, 0]);
+    expect(controller.update(100).listener.worldPosition).not.toEqual([
+      0, 0, 0,
+    ]);
   });
 
-  it('reuses compatible sounds and fades incompatible replacements', () => {
+  it('reuses compatible sounds and applies replacements immediately', () => {
     const { controller } = createRuntimeHarness();
     controller.initialize(sceneJourneyPlanFixture);
     controller.update(2_000);
-    const beforeGain = controller.currentState!.ambient.find((item) => item.id === 'forest-bed')!.gain;
+    const beforeGain = controller.currentState!.ambient.find(
+      (item) => item.id === 'forest-bed',
+    )!.gain;
 
     controller.applyPlan({
       ...sceneJourneyPlanFixture,
@@ -53,10 +57,12 @@ describe('RuntimeController Phase 2 integration', () => {
       },
     });
     const compatibleFrame = controller.update(500);
-    expect(compatibleFrame.ambient.filter((item) => item.id === 'forest-bed')).toHaveLength(1);
-    expect(compatibleFrame.ambient.find((item) => item.id === 'forest-bed')!.gain).toBeGreaterThan(
-      beforeGain,
-    );
+    expect(
+      compatibleFrame.ambient.filter((item) => item.id === 'forest-bed'),
+    ).toHaveLength(1);
+    expect(
+      compatibleFrame.ambient.find((item) => item.id === 'forest-bed')!.gain,
+    ).toBeGreaterThan(beforeGain);
 
     controller.applyPlan({
       ...sceneJourneyPlanFixture,
@@ -64,19 +70,21 @@ describe('RuntimeController Phase 2 integration', () => {
       soundscape: {
         ...sceneJourneyPlanFixture.soundscape,
         ambient: sceneJourneyPlanFixture.soundscape.ambient.map((item) =>
-          item.id === 'forest-bed' ? { ...item, assetId: 'ambient.replacement' } : item,
+          item.id === 'forest-bed'
+            ? { ...item, assetId: 'ambient.replacement' }
+            : item,
         ),
       },
     });
     const fadingFrame = controller.update(1_000);
-    expect(fadingFrame.ambient.find((item) => item.id === 'forest-bed')!.assetId).toBe(
-      'ambient.forest-wind',
-    );
+    expect(
+      fadingFrame.ambient.find((item) => item.id === 'forest-bed')!.assetId,
+    ).toBe('ambient.replacement');
     controller.update(1_000);
     const replacedFrame = controller.update(1);
-    expect(replacedFrame.ambient.find((item) => item.id === 'forest-bed')!.assetId).toBe(
-      'ambient.replacement',
-    );
+    expect(
+      replacedFrame.ambient.find((item) => item.id === 'forest-bed')!.assetId,
+    ).toBe('ambient.replacement');
   });
 
   it('preserves the current snapshot when an invalid plan is rejected', () => {
@@ -87,7 +95,9 @@ describe('RuntimeController Phase 2 integration', () => {
       ...sceneJourneyPlanFixture,
       userJourney: { goal: 'invalid', waypoints: [{ locationId: 'missing' }] },
     };
-    expect(() => controller.applyPlan(invalidPlan)).toThrow(/Invalid SceneJourneyPlan/);
+    expect(() => controller.applyPlan(invalidPlan)).toThrow(
+      /Invalid SceneJourneyPlan/,
+    );
     expect(controller.currentState).toBe(previous);
   });
 

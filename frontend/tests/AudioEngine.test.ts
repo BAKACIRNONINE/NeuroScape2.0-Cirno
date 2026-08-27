@@ -38,7 +38,7 @@ describe('AudioEngine integration', () => {
         .diagnostics()
         .map((item) => item.runtimeId)
         .sort(),
-    ).toEqual(['bird', 'breath', 'water']);
+    ).toEqual(['bird', 'breath', 'water', 'wind']);
     store
       .getState()
       .publishRuntimeWorldState({ ...snapshot(1000), action: [], event: [] });
@@ -107,6 +107,87 @@ describe('AudioEngine integration', () => {
     expect(fake.panners).toHaveLength(0);
     engine.stopOpening();
     expect(opening.stops).toEqual([fake.currentTime]);
+    await engine.dispose();
+  });
+  it('preloads a selected adaptation asset before runtime activation and reuses the cache', async () => {
+    const fetcher = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => new ArrayBuffer(1),
+    }));
+    vi.stubGlobal('fetch', fetcher);
+    const fake = new FakeAudioContext();
+    const store = createRuntimeStore();
+    const engine = new AudioEngine(
+      store,
+      new AudioContextManager(() => fake as unknown as AudioContext),
+    );
+    engine.preloadAssets(['forest_bird_far_01']);
+    await engine.enable();
+    const afterPreload = fetcher.mock.calls.length;
+    const state = snapshot(10_000);
+    state.ambient = [];
+    state.action = [];
+    state.event = [
+      {
+        ...state.event[0]!,
+        assetId: 'forest_bird_far_01',
+        adaptationId: 'adapt-preloaded',
+        plannedStartMs: 10_000,
+        runtimeActivationMs: 10_000,
+      },
+    ];
+    store.getState().publishRuntimeWorldState(state);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetcher).toHaveBeenCalledTimes(afterPreload);
+    await engine.dispose();
+  });
+  it('preloading prepares a future asset without starting it early', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => new ArrayBuffer(1),
+      })),
+    );
+    const fake = new FakeAudioContext();
+    const store = createRuntimeStore();
+    const engine = new AudioEngine(
+      store,
+      new AudioContextManager(() => fake as unknown as AudioContext),
+    );
+    engine.preloadAssets(['forest_bird_far_01']);
+    await engine.enable();
+    const state = snapshot(10_000);
+    state.ambient = [];
+    state.action = [];
+    state.event = [
+      {
+        ...state.event[0]!,
+        assetId: 'forest_bird_far_01',
+        adaptationId: 'adapt-future',
+        active: false,
+        lifecycle: 'waiting',
+        plannedStartMs: 10_250,
+      },
+    ];
+    store.getState().publishRuntimeWorldState(state);
+    await Promise.resolve();
+    expect(fake.sources).toHaveLength(0);
+
+    state.timestampMs = 11_000;
+    state.event[0] = {
+      ...state.event[0]!,
+      active: true,
+      lifecycle: 'active',
+      runtimeActivationMs: 11_000,
+    };
+    store.getState().publishRuntimeWorldState(state);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fake.sources).toHaveLength(1);
     await engine.dispose();
   });
 });

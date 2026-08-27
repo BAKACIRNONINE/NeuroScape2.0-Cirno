@@ -1,4 +1,8 @@
-import { audioLibraryById, type SceneJourneyPlan } from '@neuroscape/contracts';
+import {
+  audioLibraryById,
+  validateCanonicalPlaybackPolicy,
+  type SceneJourneyPlan,
+} from '@neuroscape/contracts';
 import type { SceneGraph } from '../scene-graph/SceneGraph.js';
 
 export interface PlanValidationResult {
@@ -31,10 +35,12 @@ export class PlanValidator {
     validateTransitionPolicy(candidate.transitionPolicy, errors);
 
     if (errors.length > 0) return { valid: false, errors };
+    const plan = structuredClone(candidate) as unknown as SceneJourneyPlan;
+    normalizeAudiblePolicies(plan);
     return {
       valid: true,
       errors: [],
-      plan: candidate as unknown as SceneJourneyPlan,
+      plan,
     };
   }
 
@@ -161,6 +167,13 @@ export class PlanValidator {
       validateGain(item.gain, `${path}.gain`, errors);
       if (typeof item.active !== 'boolean')
         errors.push(`${path}.active must be boolean.`);
+      validateOptionalExecutionWindow(item, path, errors);
+      validateDistancePolicy(
+        item.distancePolicy,
+        `${path}.distancePolicy`,
+        errors,
+      );
+      validatePlaybackPolicy(item.assetId, item.playback, `${path}.playback`, errors);
       if (item.mode === 'localized') {
         const locationId = requireString(
           item.locationId,
@@ -199,6 +212,24 @@ export class PlanValidator {
       );
       requirePositiveNumber(item.durationMs, `${path}.durationMs`, errors);
       validateGain(item.gain, `${path}.gain`, errors);
+      if (
+        item.interpolation !== undefined &&
+        item.interpolation !== 'linear' &&
+        item.interpolation !== 'smoothstep'
+      )
+        errors.push(`${path}.interpolation is invalid.`);
+      if (
+        item.trajectoryUpdatePolicy !== undefined &&
+        item.trajectoryUpdatePolicy !== 'replace-at-effective-time' &&
+        item.trajectoryUpdatePolicy !== 'continue-from-current-position'
+      )
+        errors.push(`${path}.trajectoryUpdatePolicy is invalid.`);
+      validateDistancePolicy(
+        item.distancePolicy,
+        `${path}.distancePolicy`,
+        errors,
+      );
+      validatePlaybackPolicy(item.assetId, item.playback, `${path}.playback`, errors);
       if (!Array.isArray(item.trajectory) || item.trajectory.length === 0) {
         errors.push(`${path}.trajectory must contain at least one waypoint.`);
         return;
@@ -260,7 +291,151 @@ function validateAction(
     validateGain(item.gain, `${path}.gain`, errors);
     if (typeof item.active !== 'boolean')
       errors.push(`${path}.active must be boolean.`);
+    validateOptionalExecutionWindow(item, path, errors);
+    if (
+      item.activationCondition !== undefined &&
+      item.activationCondition !== 'always' &&
+      item.activationCondition !== 'listener-moving'
+    )
+      errors.push(`${path}.activationCondition is invalid.`);
+    validateDistancePolicy(
+      item.distancePolicy,
+      `${path}.distancePolicy`,
+      errors,
+    );
+    validatePlaybackPolicy(item.assetId, item.playback, `${path}.playback`, errors);
   });
+}
+
+function validateDistancePolicy(
+  value: unknown,
+  path: string,
+  errors: string[],
+): void {
+  if (value === undefined) return;
+  if (!isRecord(value) || (value.mode !== 'none' && value.mode !== 'inverse')) {
+    errors.push(`${path}.mode must be none or inverse.`);
+    return;
+  }
+  for (const key of ['referenceDistance', 'maxDistance'] as const)
+    if (value[key] !== undefined)
+      requirePositiveNumber(value[key], `${path}.${key}`, errors);
+  if (value.minGain !== undefined)
+    validateGain(value.minGain, `${path}.minGain`, errors);
+  if (
+    typeof value.referenceDistance === 'number' &&
+    typeof value.maxDistance === 'number' &&
+    value.maxDistance < value.referenceDistance
+  )
+    errors.push(`${path}.maxDistance must be >= referenceDistance.`);
+}
+
+function validatePlaybackPolicy(
+  assetId: unknown,
+  value: unknown,
+  path: string,
+  errors: string[],
+): void {
+  if (value === undefined) {
+    if (typeof assetId === 'string' && audioLibraryById.has(assetId))
+      errors.push(`${path} is required for every canonical playable element.`);
+    return;
+  }
+  if (!isRecord(value)) {
+    errors.push(`${path} must be an object.`);
+    return;
+  }
+  if (value.mode !== 'once' && value.mode !== 'loop' && value.mode !== 'repeat')
+    errors.push(`${path}.mode is invalid.`);
+  if (
+    value.durationPolicy !== 'natural' &&
+    value.durationPolicy !== 'loop-until-end' &&
+    value.durationPolicy !== 'truncate-at-end'
+  )
+    errors.push(`${path}.durationPolicy is invalid.`);
+  if (value.repeatCount !== undefined)
+    requirePositiveNumber(value.repeatCount, `${path}.repeatCount`, errors);
+  if (value.repeatGapMs !== undefined)
+    requireNonNegativeNumber(value.repeatGapMs, `${path}.repeatGapMs`, errors);
+  if (value.perRepeatGain !== undefined) {
+    if (!Array.isArray(value.perRepeatGain))
+      errors.push(`${path}.perRepeatGain must be an array.`);
+    else
+      value.perRepeatGain.forEach((gain, index) =>
+        validateGain(gain, `${path}.perRepeatGain[${index}]`, errors),
+      );
+    if (
+      Array.isArray(value.perRepeatGain) &&
+      typeof value.repeatCount === 'number' &&
+      value.perRepeatGain.length !== value.repeatCount
+    )
+      errors.push(`${path}.perRepeatGain length must equal repeatCount.`);
+  }
+  if (
+    value.mode === 'repeat' &&
+    (value.repeatCount === undefined ||
+      value.repeatGapMs === undefined ||
+      value.perRepeatGain === undefined)
+  )
+    errors.push(
+      `${path} repeat mode requires repeatCount, repeatGapMs, and perRepeatGain.`,
+    );
+  if (typeof assetId === 'string')
+    validateCanonicalPlaybackPolicy(
+      assetId,
+      value as unknown as import('@neuroscape/contracts').PlaybackPolicy,
+    ).forEach((error) => errors.push(`${path}: ${error}`));
+}
+
+/**
+ * Authority boundary: semantic audible behavior originates in the validated
+ * plan. These compatibility defaults are a validator decision, never a hidden
+ * Runtime or renderer choice.
+ */
+function normalizeAudiblePolicies(plan: SceneJourneyPlan): void {
+  plan.soundscape.ambient.forEach((item) => {
+    item.distancePolicy ??= { mode: 'none' };
+    normalizeDistancePolicy(item.distancePolicy);
+    item.playback ??= { mode: 'loop', durationPolicy: 'loop-until-end' };
+  });
+  plan.soundscape.action.forEach((item) => {
+    item.activationCondition ??= 'always';
+    item.distancePolicy ??= { mode: 'none' };
+    normalizeDistancePolicy(item.distancePolicy);
+    item.playback ??= { mode: 'loop', durationPolicy: 'loop-until-end' };
+  });
+  plan.soundscape.event.forEach((item) => {
+    item.interpolation ??= 'linear';
+    item.trajectoryUpdatePolicy ??= 'replace-at-effective-time';
+    item.distancePolicy ??= { mode: 'none' };
+    normalizeDistancePolicy(item.distancePolicy);
+    item.playback ??= { mode: 'once', durationPolicy: 'truncate-at-end' };
+  });
+}
+
+function normalizeDistancePolicy(
+  policy: import('@neuroscape/contracts').DistancePolicy,
+): void {
+  if (policy.mode !== 'inverse') return;
+  policy.referenceDistance ??= 1;
+  policy.maxDistance ??= 10_000;
+  policy.minGain ??= 0;
+}
+
+function validateOptionalExecutionWindow(
+  item: Record<string, unknown>,
+  path: string,
+  errors: string[],
+): void {
+  if (item.startMs === undefined && item.endMs === undefined) return;
+  const start = requireNonNegativeNumber(
+    item.startMs,
+    `${path}.startMs`,
+    errors,
+  );
+  const end = requireNonNegativeNumber(item.endMs, `${path}.endMs`, errors);
+  if (start !== undefined && end !== undefined && end <= start)
+    errors.push(`${path}.endMs must be greater than startMs.`);
 }
 
 function validateAssetLayer(
@@ -288,7 +463,7 @@ function validateTransitionPolicy(value: unknown, errors: string[]): void {
     'transitionPolicy.defaultDurationMs',
     errors,
   );
-  const curves = new Set(['linear', 'smoothstep', 'cubic', 'catmull-rom']);
+  const curves = new Set(['linear', 'smoothstep']);
   if (typeof value.curve !== 'string' || !curves.has(value.curve)) {
     errors.push('transitionPolicy.curve is invalid.');
   }

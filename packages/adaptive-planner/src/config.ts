@@ -1,12 +1,12 @@
 export interface AdaptivePlannerConfig {
   sessionDurationMs: number;
   openingDurationMs: number;
-  closingStartMs: number;
   epochDurationMs: number;
   analysisWindowMs: number;
   checkpointIntervalMs: number;
   minimumValidEpochs: number;
   trendWindowCount: number;
+  trendObservationSpanMs: number;
   focusLeaningThreshold: number;
   mindWanderingLeaningThreshold: number;
   trendDeltaThreshold: number;
@@ -47,19 +47,20 @@ export interface AdaptivePlannerConfig {
 export const phase1Config: AdaptivePlannerConfig = Object.freeze({
   sessionDurationMs: 600_000,
   openingDurationMs: 60_000,
-  closingStartMs: 540_000,
   epochDurationMs: 10_000,
   analysisWindowMs: 60_000,
-  checkpointIntervalMs: 40_000,
+  checkpointIntervalMs: 20_000,
   minimumValidEpochs: 5,
   trendWindowCount: 3,
+  // Preserve the Phase-1 EEG trend horizon independently of planner cadence.
+  trendObservationSpanMs: 80_000,
   focusLeaningThreshold: 0.34,
   mindWanderingLeaningThreshold: 0.67,
   trendDeltaThreshold: 0.05,
   highVariabilityMad: 0.12,
   sustainedWindowCount: 2,
   minimumConfidence: 0.6,
-  adaptationCooldownMs: 60_000,
+  adaptationCooldownMs: 10_000,
   sceneTransitionCooldownMs: 180_000,
   maxSceneTransitions: 5,
   exactAssetCooldownMs: 90_000,
@@ -72,7 +73,9 @@ export const phase1Config: AdaptivePlannerConfig = Object.freeze({
   maxMeaningfulStasisMs: 80_000,
   // TBD_PILOT: receding-horizon, latency, and restrained-complexity policy.
   patchHorizonMs: 120_000,
-  executionFreezeBufferMs: 15_000,
+  // Minimal lead time for deterministic validation/plan handoff. Runtime's
+  // scheduler remains authoritative and will activate on its next tick.
+  executionFreezeBufferMs: 250,
   outcomeObservationWindowMs: 60_000,
   llmDecision1TimeoutMs: 12_000,
   llmDecision2TimeoutMs: 12_000,

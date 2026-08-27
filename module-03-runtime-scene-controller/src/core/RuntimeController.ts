@@ -1,4 +1,7 @@
-import type { RuntimeWorldState, SceneJourneyPlan } from '@neuroscape/contracts';
+import type {
+  RuntimeWorldState,
+  SceneJourneyPlan,
+} from '@neuroscape/contracts';
 import type { ActionController } from '../controllers/ActionController.js';
 import type { AmbientController } from '../controllers/AmbientController.js';
 import type { EventController } from '../controllers/EventController.js';
@@ -63,9 +66,20 @@ export class RuntimeController {
     this.#transitions.initialize(0);
     this.#journey.initialize(validatedPlan, 0);
     const listener = this.#journey.getListenerState();
-    this.#ambient.initialize(validatedPlan.soundscape.ambient, validatedPlan.transitionPolicy);
-    this.#action.initialize(validatedPlan.soundscape.action, validatedPlan.transitionPolicy, listener);
-    this.#event.initialize(validatedPlan.soundscape.event, validatedPlan.transitionPolicy, 0);
+    this.#ambient.initialize(
+      validatedPlan.soundscape.ambient,
+      validatedPlan.transitionPolicy,
+    );
+    this.#action.initialize(
+      validatedPlan.soundscape.action,
+      validatedPlan.transitionPolicy,
+      listener,
+    );
+    this.#event.initialize(
+      validatedPlan.soundscape.event,
+      validatedPlan.transitionPolicy,
+      0,
+    );
     this.#activePlan = validatedPlan;
     this.#currentState = this.buildSnapshot(listener);
     this.#logger.log({
@@ -78,7 +92,8 @@ export class RuntimeController {
   }
 
   update(deltaTimeMs: number): RuntimeWorldState {
-    if (!this.#currentState) throw new Error('RuntimeController is not initialized.');
+    if (!this.#currentState)
+      throw new Error('RuntimeController is not initialized.');
     assertDeltaTime(deltaTimeMs);
     this.#timestampMs += deltaTimeMs;
 
@@ -100,10 +115,24 @@ export class RuntimeController {
 
     this.#journey.replacePlan(validatedPlan);
     const listener = this.#journey.getListenerState();
-    this.#ambient.merge(validatedPlan.soundscape.ambient, validatedPlan.transitionPolicy);
-    this.#action.merge(validatedPlan.soundscape.action, validatedPlan.transitionPolicy, listener);
-    this.#event.merge(validatedPlan.soundscape.event, validatedPlan.transitionPolicy);
+    this.#ambient.merge(
+      validatedPlan.soundscape.ambient,
+      validatedPlan.transitionPolicy,
+    );
+    this.#action.merge(
+      validatedPlan.soundscape.action,
+      validatedPlan.transitionPolicy,
+      listener,
+    );
+    this.#event.merge(
+      validatedPlan.soundscape.event,
+      validatedPlan.transitionPolicy,
+    );
     this.#activePlan = validatedPlan;
+    // Publish the newly validated schedule immediately. Controllers retain
+    // future elements as waiting; no clock advancement or early activation is
+    // introduced at the merge boundary.
+    this.#currentState = this.buildSnapshot(listener);
     this.#logger.log({
       timestampMs: this.#timestampMs,
       module: 'RuntimeController',
@@ -144,7 +173,9 @@ export class RuntimeController {
     return this.#events;
   }
 
-  private buildSnapshot(listener: RuntimeWorldState['listener']): RuntimeWorldState {
+  private buildSnapshot(
+    listener: RuntimeWorldState['listener'],
+  ): RuntimeWorldState {
     return this.#stateBuilder.build({
       timestampMs: this.#timestampMs,
       listener,

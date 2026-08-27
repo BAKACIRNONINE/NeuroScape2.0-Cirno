@@ -12,7 +12,7 @@ describe('Phase 1 adaptive end-to-end harness', () => {
     if (recordingStore.stop()) runtimeStore.getState().resetSessionStreams();
   });
 
-  it('replays mock EEG through Decisions 1/2, Module 03, recording, and closing phase', async () => {
+  it('replays mock EEG through Decisions 1/2, Module 03, recording, and the actual session end', async () => {
     const harness = new AdaptiveIntegrationHarness(runtimeStore, {
       set: () => 1,
       clear: () => undefined,
@@ -50,7 +50,7 @@ describe('Phase 1 adaptive end-to-end harness', () => {
           entry.kind === 'eligibility' &&
           entry.summary.includes('closing_phase'),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(recording?.runtimeSnapshots.at(-1)?.timestampMs).toBe(600_000);
   });
 

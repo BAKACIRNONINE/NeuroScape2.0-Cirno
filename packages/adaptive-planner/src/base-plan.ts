@@ -4,6 +4,7 @@ import type {
   EventPlanItem,
   SceneJourneyPlan,
 } from '@neuroscape/contracts';
+import { canonicalPlaybackPolicy } from '@neuroscape/contracts';
 import type { AdaptivePlannerConfig } from './config.js';
 
 export const BASE_PLAN_VERSION = 'base_plan_v3';
@@ -282,6 +283,13 @@ export function assignSharedBasePlan(
 }
 
 export function materializeBasePlan(plan: BaseScenePlan): SceneJourneyPlan {
+  const hydrate = <T extends AmbientPlanItem | ActionPlanItem | EventPlanItem>(
+    element: BasePlanElement,
+  ): T => {
+    const payload = structuredClone(element.payload) as T;
+    payload.playback = canonicalPlaybackPolicy(element.assetId, element.gain);
+    return payload;
+  };
   return {
     planId: plan.planId,
     planningHorizonSec: plan.profile.durationMs / 1000,
@@ -291,13 +299,21 @@ export function materializeBasePlan(plan: BaseScenePlan): SceneJourneyPlan {
     soundscape: {
       ambient: plan.scheduledElements
         .filter((e) => e.layer === 'ambient')
-        .map((e) => structuredClone(e.payload as AmbientPlanItem)),
+        .map((e) => ({
+          ...hydrate<AmbientPlanItem>(e),
+          startMs: e.startMs,
+          endMs: e.endMs,
+        })),
       action: plan.scheduledElements
-        .filter((e) => e.layer === 'action' && e.startMs === 0)
-        .map((e) => structuredClone(e.payload as ActionPlanItem)),
+        .filter((e) => e.layer === 'action')
+        .map((e) => ({
+          ...hydrate<ActionPlanItem>(e),
+          startMs: e.startMs,
+          endMs: e.endMs,
+        })),
       event: plan.scheduledElements
         .filter((e) => e.layer === 'event')
-        .map((e) => structuredClone(e.payload as EventPlanItem)),
+        .map((e) => hydrate<EventPlanItem>(e)),
     },
     transitionPolicy: structuredClone(plan.transitionPolicy),
   };

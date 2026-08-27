@@ -30,6 +30,9 @@ describe('adaptive planner Phase 1', () => {
       if (result) checkpoints.push(result);
     }
     expect(checkpoints[0]?.state.timestampMs).toBe(60_000);
+    expect(checkpoints.slice(0, 5).map((item) => item.state.timestampMs)).toEqual(
+      [60_000, 80_000, 100_000, 120_000, 140_000],
+    );
     const lastCheckpointMs =
       phase1Config.openingDurationMs +
       Math.floor(
@@ -38,7 +41,10 @@ describe('adaptive planner Phase 1', () => {
       ) *
         phase1Config.checkpointIntervalMs;
     expect(checkpoints.at(-1)?.state.timestampMs).toBe(lastCheckpointMs);
-    expect(checkpoints.at(-1)?.eligibility.reasons).toContain('closing_phase');
+    expect(checkpoints.at(-1)?.state.phase).toBe('adaptive');
+    expect(checkpoints.at(-1)?.eligibility.reasons).not.toContain(
+      'closing_phase',
+    );
     expect(checkpoints.some((item) => item.decision?.shouldAdapt)).toBe(true);
     expect(checkpoints.some((item) => item.plan?.soundscape.event.length)).toBe(
       true,
@@ -84,6 +90,17 @@ describe('adaptive planner Phase 1', () => {
     for (const epoch of createMockTbrReplay().slice(0, 10))
       await planner.ingest(epoch);
     expect(planningCalls).toBe(0);
+  });
+
+  it('uses checkpoint deadlines when epoch timestamps are not aligned', async () => {
+    const planner = engine();
+    const template = createMockTbrReplay()[0]!;
+    const checkpoints = [];
+    for (const timestampMs of [10_000, 30_000, 59_000, 61_000, 79_000, 81_000, 101_000]) {
+      const result = await planner.ingest({ ...template, timestampMs });
+      if (result) checkpoints.push(result.state.timestampMs);
+    }
+    expect(checkpoints).toEqual([61_000, 81_000, 101_000]);
   });
 
   it('does not let a later checkpoint invalidate an in-flight planner transaction', async () => {
@@ -151,6 +168,7 @@ describe('adaptive planner Phase 1', () => {
     );
     expect(forestBed).toEqual({
       id: 'forest-bed',
+      adaptationId: 'adapt-330000',
       assetId: 'forest_ambient_bed_02',
       mode: 'global',
       gain: 0.44,
@@ -191,7 +209,7 @@ describe('adaptive planner Phase 1', () => {
         planningProvider: {
           plan: async (_context, _decision, input) => {
             const candidate = input.candidates.find(
-              (item) => item.layer === 'ambient',
+              (item) => item.layer === 'ambient' && !item.currentlyActive,
             )!;
             return {
               patch: {

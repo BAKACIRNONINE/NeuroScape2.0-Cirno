@@ -194,9 +194,7 @@ export function validateSceneJourneyPlan(
   return (
     finite(value.transitionPolicy.defaultDurationMs) &&
     value.transitionPolicy.defaultDurationMs >= 0 &&
-    ['linear', 'smoothstep', 'cubic', 'catmull-rom'].includes(
-      String(value.transitionPolicy.curve),
-    ) &&
+    ['linear', 'smoothstep'].includes(String(value.transitionPolicy.curve)) &&
     (value.reasoningSummary === undefined ||
       typeof value.reasoningSummary === 'string')
   );

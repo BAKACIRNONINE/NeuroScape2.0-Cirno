@@ -59,6 +59,7 @@ describe('Decision 2 audio-library retrieval', () => {
       phase1Config,
     );
     expect(input.promptVersion).toBe(DECISION_2_PROMPT_VERSION);
+    expect(input.retrievalAudit).toHaveLength(24);
     expect(input.currentScene).toBe('forest');
     expect(input.candidates.length).toBeGreaterThanOrEqual(3);
     expect(input.candidates.some((item) => item.layer === 'ambient')).toBe(
@@ -103,7 +104,7 @@ describe('Decision 2 audio-library retrieval', () => {
       '"durationMs":{"type":"number","enum":[6000]}',
     );
     expect(serializedSchema).toContain(
-      '"gain":{"type":"number","enum":[0.24]}',
+      '"gain":{"type":"number","minimum":0,"maximum":0.24}',
     );
   });
 
@@ -117,16 +118,18 @@ describe('Decision 2 audio-library retrieval', () => {
       true,
     );
     expect(input.candidates.some((item) => item.layer === 'action')).toBe(true);
-    expect(input.candidates.some((item) => item.layer === 'event')).toBe(false);
+    expect(input.candidates.some((item) => item.layer === 'event')).toBe(true);
     expect(input.prompt).toContain(
       'support-grounding: prioritize one body-anchored action',
     );
   });
 
-  it('uses family cooldown to withhold all recently used bird variants', () => {
+  it('keeps recently used bird variants available with a soft penalty', () => {
     const value = context();
     value.history.push({
+      adaptationId: 'adapt-heard-bird',
       timestampMs: 150_000,
+      experiencedAtMs: 150_000,
       goal: 'gently-reorient',
       scope: 'within-scene',
       assetIds: ['forest_bird_far_01'],
@@ -139,7 +142,12 @@ describe('Decision 2 audio-library retrieval', () => {
     );
     expect(
       input.candidates.some((item) => item.assetId.startsWith('forest_bird')),
-    ).toBe(false);
+    ).toBe(true);
+    expect(
+      input.retrievalAudit.find(
+        (item) => item.assetId === 'forest_bird_far_01',
+      )?.recencyPenalty,
+    ).toBeGreaterThan(0);
   });
 
   it('ranks bird 02 above bird 01 and enforces its exclusive session contract', () => {
@@ -155,7 +163,9 @@ describe('Decision 2 audio-library retrieval', () => {
     ]);
     value.state.timestampMs = 180_000;
     value.history.push({
+      adaptationId: 'adapt-heard-bird-02',
       timestampMs: 120_000,
+      experiencedAtMs: 120_000,
       goal: 'gently-reorient',
       scope: 'within-scene',
       assetIds: ['forest_bird_far_02'],
@@ -176,6 +186,136 @@ describe('Decision 2 audio-library retrieval', () => {
         assetFamilyCooldownMs: 0,
       }).candidates.some((item) => item.assetId === 'forest_bird_far_02'),
     ).toBe(true);
+  });
+
+  it('exposes the active ambient as a modification target, not an INSERT candidate', () => {
+    const input = prepareDecision2Input(
+      context(),
+      decision('support-sustained-focus'),
+      phase1Config,
+    );
+    expect(
+      input.candidates.find(
+        (item) => item.assetId === 'forest_ambient_bed_01',
+      ),
+    ).toMatchObject({
+      currentlyActive: true,
+      activeElementId: 'forest-bed',
+      currentLayer: 'ambient',
+      allowedOperations: ['ADJUST', 'REPLACE', 'SUPPRESS'],
+    });
+  });
+
+  it('accepts gain inside the authored safe range and rejects gain above it', () => {
+    const input = prepareDecision2Input(
+      context(),
+      decision('gently-reorient'),
+      phase1Config,
+    );
+    const bird = input.candidates.find(
+      (item) => item.assetId === 'forest_bird_far_01',
+    )!;
+    const result = (gain: number): PlanningResult => ({
+      patch: {
+        reasoningSummary: 'safe variable gain',
+        upsertEvent: [
+          {
+            id: 'gain-test',
+            assetId: bird.assetId,
+            activationTimeMs: 180_000,
+            durationMs: 6_000,
+            trajectory: [{ locationId: 'clearing', timestampMs: 180_000 }],
+            gain,
+          },
+        ],
+      },
+      selectedAssetIds: [bird.assetId],
+      candidateAssetIds: input.retrievedCandidateIds,
+      promptVersion: input.promptVersion,
+      prompt: input.prompt,
+      outputSchema: input.outputSchema,
+      rationale: 'test',
+      provider: 'test',
+    });
+    expect(() => validateDecision2Selection(result(0.12), input)).not.toThrow();
+    expect(() => validateDecision2Selection(result(0.25), input)).toThrow(
+      'safe range',
+    );
+  });
+
+  it('uses only audio-started history for recency and exposes diversity context', () => {
+    const value = context();
+    value.history.push(
+      {
+        adaptationId: 'planned-only',
+        timestampMs: 150_000,
+        goal: 'gently-reorient',
+        scope: 'within-scene',
+        assetIds: ['forest_bird_far_01'],
+        rationale: 'never heard',
+        intent: 'gently_reorient_attention',
+      },
+      {
+        adaptationId: 'heard',
+        timestampMs: 100_000,
+        experiencedAtMs: 100_000,
+        goal: 'gently-reorient',
+        scope: 'within-scene',
+        assetIds: ['forest_leaf_rustle_mid_01'],
+        rationale: 'heard by participant',
+        intent: 'gently_reorient_attention',
+      },
+    );
+    const input = prepareDecision2Input(
+      value,
+      decision('gently-reorient'),
+      phase1Config,
+    );
+    expect(input.fullLibrarySize).toBe(24);
+    expect(input.eligibleCandidateCount).toBeGreaterThanOrEqual(
+      input.candidates.length,
+    );
+    expect(input.recentlyUsedAssets).toEqual([
+      expect.objectContaining({
+        assetId: 'forest_leaf_rustle_mid_01',
+        lastPlayedMs: 100_000,
+        useCount: 1,
+        lastIntent: 'gently_reorient_attention',
+      }),
+    ]);
+    expect(input.recentlyUsedAssets).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ assetId: 'forest_bird_far_01' }),
+      ]),
+    );
+    expect(input.prompt).toContain('actual participant-experience history');
+  });
+
+  it('identifies body anchors from canonical action metadata and keeps reuse soft', () => {
+    const value = context();
+    value.history.push({
+      adaptationId: 'heard-body-anchor',
+      timestampMs: 100_000,
+      experiencedAtMs: 50_000,
+      goal: 'support-grounding',
+      scope: 'within-scene',
+      assetIds: ['body_slow_breath_01'],
+      rationale: 'heard body anchor',
+      intent: 'support_grounding',
+    });
+    const input = prepareDecision2Input(
+      value,
+      decision('support-grounding'),
+      phase1Config,
+    );
+    expect(
+      input.candidates.find((item) => item.assetId === 'body_slow_breath_01'),
+    ).toMatchObject({ layer: 'action' });
+    expect(
+      input.retrievalAudit.find(
+        (item) => item.assetId === 'body_slow_breath_01',
+      )?.repetitionPenalty,
+    ).toBeGreaterThan(0);
   });
 
   it('makes INSERT first-class only for low density', () => {

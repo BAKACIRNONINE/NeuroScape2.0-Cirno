@@ -15,6 +15,20 @@ describe('PlanValidator', () => {
     const result = validator.validate(sceneJourneyPlanFixture);
     expect(result.valid).toBe(true);
     expect(result.plan?.planId).toBe('plan-001');
+    expect(result.plan?.soundscape.action[0]?.activationCondition).toBe(
+      'always',
+    );
+    expect(result.plan?.soundscape.event[0]?.interpolation).toBe('linear');
+    expect(result.plan?.soundscape.event[0]?.trajectoryUpdatePolicy).toBe(
+      'replace-at-effective-time',
+    );
+    expect(result.plan?.soundscape.event[0]?.distancePolicy).toEqual({
+      mode: 'none',
+    });
+    expect(result.plan?.soundscape.event[0]?.playback).toEqual({
+      mode: 'once',
+      durationPolicy: 'truncate-at-end',
+    });
   });
 
   it('rejects unknown and disconnected journey locations', () => {
@@ -92,6 +106,28 @@ describe('PlanValidator', () => {
     });
   });
 
+  it('accepts bounded inverse distance policy and rejects inverted bounds', () => {
+    const valid = structuredClone(sceneJourneyPlanFixture);
+    valid.soundscape.event[0]!.distancePolicy = {
+      mode: 'inverse',
+      referenceDistance: 2,
+      maxDistance: 20,
+      minGain: 0.1,
+    };
+    expect(validator.validate(valid).valid).toBe(true);
+
+    const invalid = structuredClone(valid);
+    invalid.soundscape.event[0]!.distancePolicy = {
+      mode: 'inverse',
+      referenceDistance: 20,
+      maxDistance: 2,
+      minGain: 0.1,
+    };
+    expect(validator.validate(invalid).errors.join(' ')).toMatch(
+      /maxDistance must be >= referenceDistance/,
+    );
+  });
+
   it('rejects canonical assets in the wrong layer and water cues without water context', () => {
     const wrongLayer = structuredClone(sceneJourneyPlanFixture);
     wrongLayer.soundscape.ambient[0]!.assetId = 'forest_bird_far_01';
@@ -113,6 +149,20 @@ describe('PlanValidator', () => {
     ];
     expect(validator.validate(dryWaterCue).errors.join(' ')).toMatch(
       /requires an established stream\/water context/,
+    );
+  });
+
+  it('rejects a canonical playable element with missing playback before Runtime', () => {
+    const candidate = structuredClone(sceneJourneyPlanFixture);
+    candidate.soundscape.event[0] = {
+      ...candidate.soundscape.event[0]!,
+      assetId: 'forest_bird_far_01',
+      playback: undefined,
+    };
+    const result = validator.validate(candidate);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain(
+      'soundscape.event[0].playback is required for every canonical playable element.',
     );
   });
 });

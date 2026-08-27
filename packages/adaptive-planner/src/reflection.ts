@@ -17,6 +17,11 @@ export type AdaptationLifecycleStatus =
   | 'QUEUED'
   | 'APPLYING'
   | 'APPLIED'
+  | 'PLAN_APPLIED'
+  | 'RUNTIME_ACTIVATED'
+  | 'AUDIO_STARTED'
+  | 'AUDIO_FINISHED'
+  | 'AUDIO_FAILED'
   | 'WAITING_FOR_OBSERVATION'
   | 'PROVISIONALLY_EVALUATED'
   | 'UPDATED_EVALUATION'
@@ -34,6 +39,9 @@ export interface AdaptationLifecycle {
   contextBefore: AttentionState;
   transitions: LifecycleTransition[];
   appliedAtMs?: number;
+  audioStartedAtMs?: number;
+  audioFinishedAtMs?: number;
+  audioFailedAtMs?: number;
   transitionCompletedAtMs?: number;
 }
 export type ObservedResponse =
@@ -97,7 +105,11 @@ export function transitionLifecycle(
     timestampMs,
     ...(reasonCode ? { reasonCode } : {}),
   });
-  if (status === 'APPLIED') next.appliedAtMs = timestampMs;
+  if (status === 'APPLIED' || status === 'PLAN_APPLIED')
+    next.appliedAtMs = timestampMs;
+  if (status === 'AUDIO_STARTED') next.audioStartedAtMs = timestampMs;
+  if (status === 'AUDIO_FINISHED') next.audioFinishedAtMs = timestampMs;
+  if (status === 'AUDIO_FAILED') next.audioFailedAtMs = timestampMs;
   if (status === 'WAITING_FOR_OBSERVATION')
     next.transitionCompletedAtMs = timestampMs;
   return next;
@@ -109,7 +121,7 @@ export function evaluateAdaptationOutcome(options: {
   window: ObservationWindow;
 }): AdaptationOutcome {
   const { lifecycle, postState, window } = options;
-  const applied = lifecycle.appliedAtMs;
+  const applied = lifecycle.audioStartedAtMs;
   const completed = lifecycle.transitionCompletedAtMs;
   const base: Pick<
     AdaptationOutcome,
@@ -126,8 +138,8 @@ export function evaluateAdaptationOutcome(options: {
     evidenceCount: 1,
   };
   if (
-    !applied ||
-    !completed ||
+    applied === undefined ||
+    completed === undefined ||
     lifecycle.transitions.some(
       (t) => t.status === 'FAILED' || t.status === 'REJECTED',
     )
@@ -136,7 +148,11 @@ export function evaluateAdaptationOutcome(options: {
       ...base,
       observedResponse: 'not_yet_observable',
       outcomeConfidence: 'unavailable',
-      reasonCodes: ['PATCH_NOT_APPLIED'],
+      reasonCodes: [
+        lifecycle.audioFailedAtMs
+          ? 'INTERVENTION_NOT_EXPERIENCED'
+          : 'AUDIO_NOT_STARTED',
+      ],
     };
   const overlap = Math.max(0, applied - window.windowStartMs);
   if (window.windowEndMs <= completed || overlap > 0)

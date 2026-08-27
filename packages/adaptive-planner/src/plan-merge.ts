@@ -30,6 +30,9 @@ export function mergePlanPatch(
   patch: SoundscapePlanPatch,
   timestampMs: number,
 ): SceneJourneyPlan {
+  const adaptationId = `adapt-${timestampMs}`;
+  const tagged = <T extends { id: string }>(items: readonly T[] | undefined) =>
+    items?.map((item) => ({ ...structuredClone(item), adaptationId }));
   return {
     planId: `adaptive-plan-${timestampMs}`,
     planningHorizonSec: Math.max(
@@ -45,18 +48,18 @@ export function mergePlanPatch(
       ambient: normalizeAmbient(
         mergeById(
           current.soundscape.ambient,
-          patch.upsertAmbient,
+          tagged(patch.upsertAmbient),
           patch.removeIds,
         ),
       ),
       action: mergeById(
         current.soundscape.action,
-        patch.upsertAction,
+        tagged(patch.upsertAction),
         patch.removeIds,
       ),
       event: mergeById(
         current.soundscape.event,
-        patch.upsertEvent,
+        tagged(patch.upsertEvent),
         patch.removeIds,
       ),
     },

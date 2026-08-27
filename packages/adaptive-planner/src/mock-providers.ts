@@ -225,7 +225,7 @@ export class MockPlanningProvider implements PlanningProvider {
             ? 'waterfall'
             : 'stream_bank';
       const candidate = input.candidates.find(
-        (item) => item.layer === 'ambient',
+        (item) => item.layer === 'ambient' && !item.currentlyActive,
       );
       if (!candidate)
         throw new Error(
@@ -239,6 +239,8 @@ export class MockPlanningProvider implements PlanningProvider {
         ...(localized ? { locationId: destination } : {}),
         gain: candidate.recommendedVolume,
         active: true,
+        distancePolicy: { mode: 'none' },
+        playback: { mode: 'loop', durationPolicy: 'loop-until-end' },
       };
       return {
         patch: {
@@ -264,7 +266,12 @@ export class MockPlanningProvider implements PlanningProvider {
     }
     if (decision.goal === 'support-grounding') {
       const candidate =
-        input.candidates.find((item) => item.tags.includes('breath')) ??
+        input.candidates.find(
+          (item) => item.tags.includes('breath') && !item.currentlyActive,
+        ) ??
+        input.candidates.find(
+          (item) => item.layer === 'action' && !item.currentlyActive,
+        ) ??
         input.candidates.find((item) => item.layer === 'action');
       if (!candidate)
         return {
@@ -282,12 +289,15 @@ export class MockPlanningProvider implements PlanningProvider {
           provider: 'mock-planner-v1',
         };
       const action: ActionPlanItem = {
-        id: 'breathing',
+        id: candidate.activeElementId ?? 'breathing',
         assetId: candidate.assetId,
-        attachment: 'chest',
+        attachment: candidate.tags.includes('footstep') ? 'feet' : 'chest',
         relativePosition: [...candidate.defaultPosition],
         gain: candidate.recommendedVolume,
         active: true,
+        activationCondition: 'always',
+        distancePolicy: { mode: 'none' },
+        playback: { mode: 'loop', durationPolicy: 'loop-until-end' },
       };
       return {
         patch: {
@@ -313,7 +323,7 @@ export class MockPlanningProvider implements PlanningProvider {
           'No continuous ambient candidate is available for sustained-focus support.',
         );
       const ambient: AmbientPlanItem = {
-        id: 'supportive-ambient',
+        id: candidate.activeElementId ?? 'supportive-ambient',
         assetId: candidate.assetId,
         mode: candidate.spatialBehavior.includes('wide')
           ? 'global'
@@ -339,7 +349,10 @@ export class MockPlanningProvider implements PlanningProvider {
         provider: 'mock-planner-v2',
       };
     }
-    const candidate = input.candidates.find((item) => item.layer === 'event');
+    const candidate =
+      input.candidates.find(
+        (item) => item.layer === 'event' && !item.currentlyActive,
+      ) ?? input.candidates.find((item) => item.layer === 'event');
     if (!candidate) {
       throw new Error(
         'No event asset satisfies library compatibility and cooldown filtering.',
@@ -356,7 +369,7 @@ export class MockPlanningProvider implements PlanningProvider {
       'clearing';
     const moving = candidate.defaultMotion.type !== 'none';
     const event: EventPlanItem = {
-      id: `event-${now}`,
+      id: candidate.activeElementId ?? `event-${now}`,
       assetId,
       activationTimeMs: now + 2_000,
       durationMs,
@@ -370,6 +383,31 @@ export class MockPlanningProvider implements PlanningProvider {
           ]
         : [{ locationId: currentLocation, timestampMs: now + 2_000 }],
       gain: candidate.recommendedVolume,
+      interpolation: moving ? 'smoothstep' : 'linear',
+      trajectoryUpdatePolicy: 'replace-at-effective-time',
+      distancePolicy: { mode: 'none' },
+      playback: (() => {
+        const contract = audioLibrary.find(
+          (asset) => asset.asset_id === assetId,
+        )?.playback_contract;
+        if (contract?.mode === 'burst') {
+          const repeatCount = contract.repeat_count_options[0] ?? 1;
+          return {
+            mode: 'repeat' as const,
+            durationPolicy: 'truncate-at-end' as const,
+            repeatCount,
+            repeatGapMs: contract.inter_repeat_gap_sec * 1_000,
+            perRepeatGain: Array.from(
+              { length: repeatCount },
+              () => candidate.recommendedVolume,
+            ),
+          };
+        }
+        return {
+          mode: 'once' as const,
+          durationPolicy: 'truncate-at-end' as const,
+        };
+      })(),
     };
     return {
       patch: {

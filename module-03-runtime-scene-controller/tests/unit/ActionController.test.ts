@@ -10,7 +10,12 @@ describe('ActionController', () => {
     const actions = new ActionController(transitions);
     const listener = {
       worldPosition: [2, 0, 3] as [number, number, number],
-      orientation: [0, Math.SQRT1_2, 0, Math.SQRT1_2] as [number, number, number, number],
+      orientation: [0, Math.SQRT1_2, 0, Math.SQRT1_2] as [
+        number,
+        number,
+        number,
+        number,
+      ],
       velocity: [0, 0, 0] as [number, number, number],
       semanticLocation: 'forest_entry',
     };
@@ -35,7 +40,7 @@ describe('ActionController', () => {
     expect(position[2]).toBeCloseTo(3);
   });
 
-  it('activates feet-attached actions when the listener moves', () => {
+  it('does not suppress feet actions unless the validated condition requires movement', () => {
     const transitions = new TransitionController(new RuntimeEventBus());
     transitions.initialize();
     const actions = new ActionController(transitions);
@@ -59,6 +64,26 @@ describe('ActionController', () => {
       { defaultDurationMs: 100, curve: 'linear' },
       still,
     );
+    transitions.update(100);
+    expect(actions.getStates()[0]!.active).toBe(true);
+
+    actions.merge(
+      [
+        {
+          id: 'steps',
+          assetId: 'action.steps',
+          attachment: 'feet',
+          relativePosition: [0, -1.5, 0],
+          gain: 0.5,
+          active: true,
+          activationCondition: 'listener-moving',
+        },
+      ],
+      { defaultDurationMs: 100, curve: 'linear' },
+      still,
+    );
+    actions.update(0, still);
+    transitions.update(100);
     expect(actions.getStates()[0]!.active).toBe(false);
     actions.update(10, { ...still, velocity: [0, 0, -1] });
     transitions.update(100);

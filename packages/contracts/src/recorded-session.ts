@@ -2,8 +2,9 @@ import type { NeuroState } from './neuro-state.js';
 import type { PlannerStatusPayload, SessionStatusPayload } from './protocol.js';
 import type { RuntimeWorldState } from './runtime-world-state.js';
 import type { SceneJourneyPlan } from './scene-journey-plan.js';
+import type { AudioExecutionDiagnostic, AudioPlaybackEvidence } from './audio-playback-evidence.js';
 
-export const RECORDED_SESSION_SCHEMA_VERSION = '1.2';
+export const RECORDED_SESSION_SCHEMA_VERSION = '1.3';
 export interface RecordedSessionMetadata {
   sessionId: string;
   protocolVersion: string;
@@ -69,4 +70,6 @@ export interface RecordedSession {
   plannerEvents: TimestampedRecord<PlannerStatusPayload>[];
   /** Structured, user-study-safe rationale and inputs/outputs; never hidden chain-of-thought. */
   adaptiveTrace: AdaptiveTraceRecord[];
+  audioPlaybackEvidence?: AudioPlaybackEvidence[];
+  audioExecutionDiagnostics?: AudioExecutionDiagnostic[];
 }

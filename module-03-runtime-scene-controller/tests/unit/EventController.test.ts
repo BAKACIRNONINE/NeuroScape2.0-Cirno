@@ -38,13 +38,47 @@ const eventPlan = {
 };
 
 describe('EventController', () => {
+  it('retains future events as waiting and honors the exact planned end', () => {
+    const { controller, transitions } = createEvents();
+    controller.initialize([eventPlan], {
+      defaultDurationMs: 100,
+      curve: 'linear',
+    });
+    controller.update(999, listener);
+    transitions.update(999);
+    expect(controller.getStates(listener)[0]).toMatchObject({
+      assetId: 'event.bird',
+      lifecycle: 'waiting',
+      active: false,
+    });
+
+    controller.update(1, listener);
+    transitions.update(100);
+    expect(controller.getStates(listener)[0]?.lifecycle).toBe('active');
+
+    controller.update(4_000, listener);
+    transitions.update(4_000);
+    expect(controller.getStates(listener)[0]).toMatchObject({
+      lifecycle: 'finished',
+      active: false,
+    });
+  });
+
   it('spawns, moves continuously, finishes, and removes events', () => {
     const { controller, transitions, bus } = createEvents();
-    controller.initialize([eventPlan], { defaultDurationMs: 1_000, curve: 'linear' });
+    controller.initialize([eventPlan], {
+      defaultDurationMs: 1_000,
+      curve: 'linear',
+    });
     controller.update(1_000, listener);
     transitions.update(1_000);
-    expect(controller.getStates(listener)[0]).toMatchObject({ lifecycle: 'active', active: true });
-    expect(bus.history.some((event) => event.type === 'EventSpawned')).toBe(true);
+    expect(controller.getStates(listener)[0]).toMatchObject({
+      lifecycle: 'active',
+      active: true,
+    });
+    expect(bus.history.some((event) => event.type === 'EventSpawned')).toBe(
+      true,
+    );
 
     controller.update(1_000, listener);
     transitions.update(1_000);
@@ -60,7 +94,9 @@ describe('EventController', () => {
     expect(controller.getStates(listener)[0]?.lifecycle).toBe('finished');
     controller.update(0, listener);
     expect(controller.getStates(listener)).toEqual([]);
-    expect(bus.history.some((event) => event.type === 'EventFinished')).toBe(true);
+    expect(bus.history.some((event) => event.type === 'EventFinished')).toBe(
+      true,
+    );
   });
 
   it('is frame-rate independent along a deterministic trajectory', () => {
@@ -82,14 +118,17 @@ describe('EventController', () => {
       splitHarness.controller.update(index === 0 ? 1_100 : 100, listener);
       splitHarness.transitions.update(index === 0 ? 1_100 : 100);
     }
-    expect(splitHarness.controller.getStates(listener)[0]!.worldPosition).toEqual(
-      directHarness.controller.getStates(listener)[0]!.worldPosition,
-    );
+    expect(
+      splitHarness.controller.getStates(listener)[0]!.worldPosition,
+    ).toEqual(directHarness.controller.getStates(listener)[0]!.worldPosition);
   });
 
-  it('rebases compatible trajectory updates at the current position', () => {
+  it('continues from the current position only when explicitly requested', () => {
     const { controller, transitions } = createEvents();
-    controller.initialize([eventPlan], { defaultDurationMs: 100, curve: 'linear' });
+    controller.initialize([eventPlan], {
+      defaultDurationMs: 100,
+      curve: 'linear',
+    });
     controller.update(2_000, listener);
     transitions.update(2_000);
     const before = controller.getStates(listener)[0]!.worldPosition;
@@ -98,6 +137,7 @@ describe('EventController', () => {
         {
           ...eventPlan,
           durationMs: 6_000,
+          trajectoryUpdatePolicy: 'continue-from-current-position' as const,
           trajectory: [{ locationId: 'stream_bank', timestampMs: 7_000 }],
         },
       ],

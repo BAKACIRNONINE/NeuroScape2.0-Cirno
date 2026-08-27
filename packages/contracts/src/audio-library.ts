@@ -1,4 +1,5 @@
 import libraryData from './audio_library.json' with { type: 'json' };
+import type { PlaybackPolicy } from './scene-journey-plan.js';
 
 export type AudioLibraryLayer = 'ambient' | 'event' | 'action';
 export type AudioLibraryScene = 'forest' | 'ocean_beach';
@@ -96,3 +97,58 @@ export const audioLibrary: readonly AudioLibraryAsset[] = Object.freeze(
 export const audioLibraryById: ReadonlyMap<string, AudioLibraryAsset> = new Map(
   audioLibrary.map((asset) => [asset.asset_id, asset]),
 );
+
+/** Materialize the authored default; Runtime must never infer playback semantics. */
+export function canonicalPlaybackPolicy(
+  assetId: string,
+  gain: number,
+): PlaybackPolicy {
+  const asset = audioLibraryById.get(assetId);
+  if (!asset) throw new Error(`Unknown canonical audio asset: ${assetId}.`);
+  const contract = asset.playback_contract;
+  if (!contract)
+    throw new Error(`Canonical audio asset ${assetId} has no playback_contract.`);
+  if (contract.mode === 'long_bed')
+    return { mode: 'loop', durationPolicy: 'loop-until-end' };
+  if (contract.mode === 'burst') {
+    const repeatCount = contract.repeat_count_options[0];
+    if (repeatCount === undefined || !Number.isInteger(repeatCount) || repeatCount <= 0)
+      throw new Error(`Canonical audio asset ${assetId} has no valid repeat count.`);
+    return {
+      mode: 'repeat',
+      durationPolicy: 'truncate-at-end',
+      repeatCount,
+      repeatGapMs: contract.inter_repeat_gap_sec * 1_000,
+      perRepeatGain: Array.from({ length: repeatCount }, () => gain),
+    };
+  }
+  return { mode: 'once', durationPolicy: 'truncate-at-end' };
+}
+
+export function validateCanonicalPlaybackPolicy(
+  assetId: string,
+  playback: PlaybackPolicy,
+): string[] {
+  const asset = audioLibraryById.get(assetId);
+  // Compatibility aliases are validated structurally by Module 03. Canonical
+  // ids, when present, must obey their authored metadata.
+  if (!asset) return [];
+  const contract = asset.playback_contract;
+  if (!contract) return [`Canonical audio asset ${assetId} has no playback_contract.`];
+  const expectedMode =
+    contract.mode === 'long_bed'
+      ? 'loop'
+      : contract.mode === 'burst'
+        ? 'repeat'
+        : 'once';
+  const errors: string[] = [];
+  if (playback.mode !== expectedMode)
+    errors.push(`${assetId} playback mode ${playback.mode} is not supported; expected ${expectedMode}.`);
+  if (
+    playback.mode === 'repeat' &&
+    playback.repeatCount !== undefined &&
+    !contract.repeat_count_options.includes(playback.repeatCount)
+  )
+    errors.push(`${assetId} repeatCount ${playback.repeatCount} is not authored.`);
+  return errors;
+}

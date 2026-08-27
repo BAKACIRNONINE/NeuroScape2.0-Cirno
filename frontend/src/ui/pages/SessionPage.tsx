@@ -84,6 +84,9 @@ export function SessionPage({
     action: runtime?.action.filter((item) => item.active).length ?? 0,
     event: runtime?.event.filter((item) => item.active).length ?? 0,
   };
+  const audioSourceErrors = audioEngine
+    .diagnostics()
+    .filter((source) => source.playbackState === 'error');
   useEffect(() => {
     if (!restartOpen) return;
     setRestartError('');
@@ -332,6 +335,14 @@ export function SessionPage({
                 {audio.sourceCount}/{audioEngine.diagnostics().length}
               </b>
             </span>
+            <span>
+              Audio execution errors <b>{audioSourceErrors.length}</b>
+            </span>
+            {audioSourceErrors.map((source) => (
+              <span role="alert" key={`${source.category}:${source.runtimeId}`}>
+                {source.runtimeId} · {source.assetId} · {source.errorCode ?? 'AUDIO_ERROR'}: {source.errorMessage ?? 'Playback failed'}
+              </span>
+            ))}
             <span>
               Master audio capture <b>{audio.recordingStatus}</b>
             </span>

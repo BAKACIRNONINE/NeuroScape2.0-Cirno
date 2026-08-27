@@ -46,10 +46,27 @@ function lifecycle(): AdaptationLifecycle {
   };
   value = transitionLifecycle(value, 'VALIDATED', 195_000);
   value = transitionLifecycle(value, 'APPLIED', 205_000);
+  value = transitionLifecycle(value, 'AUDIO_STARTED', 205_000);
   return transitionLifecycle(value, 'WAITING_FOR_OBSERVATION', 213_000);
 }
 
 describe('deterministic reflection memory', () => {
+  it('does not treat plan application without audio start as experienced', () => {
+    const notStarted = lifecycle();
+    notStarted.audioStartedAtMs = undefined;
+    const outcome = evaluateAdaptationOutcome({
+      lifecycle: notStarted,
+      postState: { ...stateAt(290_000, 1.35), trajectory: 'improving' },
+      window: {
+        windowStartMs: 220_000,
+        windowEndMs: 280_000,
+        concurrentBasePlanChange: false,
+        concurrentPatchCount: 1,
+      },
+    });
+    expect(outcome.observedResponse).toBe('not_yet_observable');
+    expect(outcome.reasonCodes).toContain('AUDIO_NOT_STARTED');
+  });
   it('does not evaluate an overlapping first post-adaptation window', () => {
     const outcome = evaluateAdaptationOutcome({
       lifecycle: lifecycle(),

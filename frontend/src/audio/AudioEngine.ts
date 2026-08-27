@@ -1,4 +1,8 @@
-import type { RuntimeWorldState } from '@neuroscape/contracts';
+import type {
+  AudioPlaybackEvidence,
+  AudioExecutionDiagnostic,
+  RuntimeWorldState,
+} from '@neuroscape/contracts';
 import type { RuntimeStore } from '../runtime/RuntimeStore.js';
 import { runtimeStore } from '../runtime/RuntimeStore.js';
 import { AudioAssetManager } from './AudioAssetManager.js';
@@ -30,6 +34,12 @@ export class AudioEngine {
   readonly #store: RuntimeStore;
   readonly #contexts: AudioContextManager;
   readonly #listeners = new Set<() => void>();
+  readonly #evidenceListeners = new Set<
+    (evidence: AudioPlaybackEvidence) => void
+  >();
+  readonly #diagnosticListeners = new Set<
+    (diagnostic: AudioExecutionDiagnostic) => void
+  >();
   #unsubscribe: (() => void) | null = null;
   #master: GainNode | null = null;
   #sources: SourceManager | null = null;
@@ -43,6 +53,7 @@ export class AudioEngine {
     HTMLMediaElement,
     MediaElementAudioSourceNode
   >();
+  readonly #plannedPreloadAssetIds = new Set<string>();
   #captureChunks: Blob[] = [];
   #captureStartedAtMs = 0;
   #state: AudioEngineState = {
@@ -64,6 +75,18 @@ export class AudioEngine {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
   };
+  subscribePlaybackEvidence = (
+    listener: (evidence: AudioPlaybackEvidence) => void,
+  ) => {
+    this.#evidenceListeners.add(listener);
+    return () => this.#evidenceListeners.delete(listener);
+  };
+  subscribeExecutionDiagnostics = (
+    listener: (diagnostic: AudioExecutionDiagnostic) => void,
+  ) => {
+    this.#diagnosticListeners.add(listener);
+    return () => this.#diagnosticListeners.delete(listener);
+  };
   diagnostics(): AudioSourceDiagnostics[] {
     return this.#sources?.diagnostics() ?? [];
   }
@@ -75,6 +98,7 @@ export class AudioEngine {
       await this.#contexts.resume();
       if (!this.#sources) this.#initializeGraph();
       await this.#assets?.preload();
+      await this.#loadPlannedAssets();
       this.#unsubscribe ??= this.#store.subscribe((state, previous) => {
         if (
           state.runtimeWorldState !== previous.runtimeWorldState &&
@@ -165,7 +189,9 @@ export class AudioEngine {
     if (!this.#openingBuffer) {
       const response = await fetch(MEDITATION_OPENING_URL);
       if (!response.ok)
-        throw new Error(`Opening audio failed to load: HTTP ${response.status}`);
+        throw new Error(
+          `Opening audio failed to load: HTTP ${response.status}`,
+        );
       this.#openingBuffer = await this.#contexts.context.decodeAudioData(
         await response.arrayBuffer(),
       );
@@ -222,6 +248,10 @@ export class AudioEngine {
       );
     this.#emit();
   }
+  preloadAssets(assetIds: readonly string[]): void {
+    assetIds.forEach((assetId) => this.#plannedPreloadAssetIds.add(assetId));
+    void this.#loadPlannedAssets();
+  }
   async dispose(): Promise<void> {
     await this.stopRecording();
     this.stopOpening();
@@ -275,6 +305,18 @@ export class AudioEngine {
       new PlaybackScheduler(context),
       this.#hrtf,
       () => this.#emit(),
+      (evidence) =>
+        this.#evidenceListeners.forEach((listener) => listener(evidence)),
+      (diagnostic) =>
+        this.#diagnosticListeners.forEach((listener) => listener(diagnostic)),
+    );
+  }
+  async #loadPlannedAssets(): Promise<void> {
+    if (!this.#assets) return;
+    await Promise.all(
+      [...this.#plannedPreloadAssetIds].map((assetId) =>
+        this.#assets!.load(assetId),
+      ),
     );
   }
   #set(state: AudioEngineState): void {
