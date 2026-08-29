@@ -16,6 +16,7 @@ import {
   plannerTimeline,
   semanticLocationDurations,
 } from '../summary/index.js';
+import { EegTimelinePlot } from '../components/EegTimelinePlot.js';
 
 const percent = (value: number | null) =>
   value === null ? '—' : `${Math.round(value * 100)}%`;
@@ -171,6 +172,12 @@ export function SummaryPage({
         ))}
       </section>
       <section className="summary-panel neuro-timeline">
+        <EegTimelinePlot
+          recording={recording}
+          title={`${recording.metadata.runMode === 'non-adaptive' ? 'Non-Adaptive' : 'Adaptive'} EEG / TBR Timeline`}
+        />
+      </section>
+      <section className="summary-panel neuro-timeline">
         <h2>Neuro Arousal Timeline / Calibration-Relative Attention</h2>
         {recording.neuroStates.length ? (
           <>
@@ -183,14 +190,24 @@ export function SummaryPage({
                 className="arousal-line"
                 points={points(
                   recording.neuroStates.map(
-                    (item) =>
-                      item.attention?.focusPosition ?? item.arousal.value,
+                    (item) => {
+                      const attention = item.attention;
+                      if (attention && 'baselineLogTbr' in attention) {
+                        const delta = attention.robustDeltaFromBaseline;
+                        return delta === null
+                          ? item.arousal.value
+                          : Math.max(0, Math.min(1, 0.5 + delta / 6));
+                      }
+                      return attention && 'focusPosition' in attention
+                        ? attention.focusPosition ?? item.arousal.value
+                        : item.arousal.value;
+                    },
                   ),
                 )}
               />
             </svg>
             <div className="timeline-legend">
-              <span>Calibration-relative focus</span>
+              <span>Baseline-relative TBR (center line = personal baseline)</span>
             </div>
           </>
         ) : (

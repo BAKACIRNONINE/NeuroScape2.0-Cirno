@@ -11,7 +11,10 @@ import {
 import { mockCalibrationProfile } from '../src/fixtures.js';
 
 const stateAt = (timestampMs: number, logTbr: number) =>
-  new AttentionInterpreter(mockCalibrationProfile, phase1Config).ingest({
+  new AttentionInterpreter(mockCalibrationProfile, {
+    ...phase1Config,
+    minimumValidEpochs: 1,
+  }).ingest({
     timestampMs,
     logTbr,
     valid: true,

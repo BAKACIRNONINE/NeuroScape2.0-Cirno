@@ -62,9 +62,22 @@ function noOutputMessage(payload) {
   }, output_types=${outputTypes || 'none'}).`;
 }
 
+function transportErrorMessage(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const cause = error instanceof Error ? error.cause : undefined;
+  const causeMessage =
+    cause && typeof cause === 'object'
+      ? (cause.code ?? cause.message)
+      : cause === undefined
+        ? undefined
+        : String(cause);
+  return `OpenAI network request failed: ${message}${causeMessage ? ` (${causeMessage})` : ''}`;
+}
+
 export function createOpenAIRequester(options = {}) {
   const fetchImpl = options.fetchImpl ?? fetch;
   const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY;
+  const networkRetryDelayMs = options.networkRetryDelayMs ?? 300;
   return async function requestOpenAI({
     stage,
     prompt,
@@ -98,28 +111,47 @@ export function createOpenAIRequester(options = {}) {
         ? (process.env.OPENAI_DECISION_1_MAX_OUTPUT_TOKENS ?? 900)
         : (process.env.OPENAI_DECISION_2_MAX_OUTPUT_TOKENS ?? 2_000),
     );
-    const response = await fetchImpl(OPENAI_RESPONSES_URL, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        reasoning: { effort: reasoningEffort, context: 'current_turn' },
-        input: prompt,
-        text: {
-          format: { type: 'json_schema', ...outputSchema },
+    const request = () =>
+      fetchImpl(OPENAI_RESPONSES_URL, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'content-type': 'application/json',
         },
-        max_output_tokens: maxOutputTokens,
-        store: false,
-        metadata: {
-          neuroscape_stage: stage,
-          prompt_version: promptVersion,
-        },
-      }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+        body: JSON.stringify({
+          model,
+          reasoning: { effort: reasoningEffort, context: 'current_turn' },
+          input: prompt,
+          text: {
+            format: { type: 'json_schema', ...outputSchema },
+          },
+          max_output_tokens: maxOutputTokens,
+          store: false,
+          metadata: {
+            neuroscape_stage: stage,
+            prompt_version: promptVersion,
+          },
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    let response;
+    try {
+      response = await request();
+    } catch (error) {
+      // Retry only transport failures that produced no HTTP response. Do not
+      // retry timeouts or any OpenAI 4xx/5xx response below.
+      if (!(error instanceof TypeError))
+        throw new Error(transportErrorMessage(error));
+      if (networkRetryDelayMs > 0)
+        await new Promise((resolve) =>
+          setTimeout(resolve, networkRetryDelayMs),
+        );
+      try {
+        response = await request();
+      } catch (retryError) {
+        throw new Error(transportErrorMessage(retryError));
+      }
+    }
     const payload = await response.json();
     if (!response.ok) throw new Error(errorMessage(payload, response.status));
     const outputText = outputTextFrom(payload);

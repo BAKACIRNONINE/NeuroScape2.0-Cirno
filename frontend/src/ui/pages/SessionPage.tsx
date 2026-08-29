@@ -126,7 +126,7 @@ export function SessionPage({
     mode === 'adaptive'
       ? adaptiveIntegrationHarness
       : mode === 'non-adaptive'
-        ? integrationHarness
+        ? adaptiveIntegrationHarness
         : mode === 'long-demo'
           ? longIntegrationHarness
           : mode === 'diagnostic'
@@ -163,7 +163,7 @@ export function SessionPage({
   };
   const modeLabel =
     mode === 'non-adaptive'
-      ? '10 min · approved fixed trajectory · EEG/LLM disabled'
+      ? '10 min · fixed ambient-only plan · EEG logged, adaptation disabled'
       : mode === 'live'
         ? `Live · ${connection.status}${connection.latencyMs === null ? '' : ` · ${connection.latencyMs} ms`}`
         : mode === 'adaptive'

@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from app import config
 from app.calibration.machine import InvalidTransition
 from app.calibration.service import CalibrationService
-from app.models.schemas import CalibrationStart, EEGSample, SelfReportSubmit, SessionCreate
+from app.models.schemas import CalibrationStart, EEGSample, GuidanceEventSubmit, ReplayProcessSubmit, SelfReportSubmit, SessionCreate
 from app.signal_processing.core import (
     INCOMPATIBLE_PROFILE_MESSAGE,
     IncompatibleCalibrationProfile,
@@ -93,9 +93,24 @@ def start_block(payload: CalibrationStart = CalibrationStart()) -> dict:
         raise HTTPException(400, str(exc)) from exc
 
 
+@app.post("/api/calibration/baseline/start")
+def start_baseline(payload: CalibrationStart = CalibrationStart()) -> dict:
+    return start_block(payload)
+
+
 @app.post("/api/calibration/block/end-early")
 def end_block_early() -> dict:
     return service.end_block_early().model_dump()
+
+
+@app.post("/api/calibration/baseline/end-early")
+def end_baseline_early() -> dict:
+    return service.end_block_early().model_dump()
+
+
+@app.post("/api/calibration/guidance/event")
+def guidance_event(payload: GuidanceEventSubmit) -> dict:
+    return service.record_guidance_event(payload.event, payload.timing_offset_ms)
 
 
 @app.post("/api/calibration/self-report")
@@ -149,6 +164,11 @@ def start_saved_live_session(session_id: str) -> dict:
 @app.get("/api/live/epoch")
 def live_epoch(after_sample_index: int = -1) -> dict:
     return service.live_epoch(after_sample_index)
+
+
+@app.post("/api/live/replay/process")
+def process_replay(payload: ReplayProcessSubmit) -> dict:
+    return service.process_replay_samples(payload.samples)
 
 
 @app.post("/api/live/recording/start")

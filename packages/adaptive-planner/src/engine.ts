@@ -159,6 +159,7 @@ export class AdaptivePlannerEngine {
     );
     const context = {
       state,
+      profile: structuredClone(this.#profile),
       recentStates: structuredClone(this.#checkpointStates.slice(-6)),
       currentPlan: structuredClone(this.#currentPlan),
       history: structuredClone(this.#history),
@@ -455,7 +456,7 @@ export class AdaptivePlannerEngine {
     this.#memory.add({
       adaptationId: lifecycle.adaptationId,
       contextSignature: {
-        positionBand: lifecycle.contextBefore.label,
+        positionBand: lifecycle.contextBefore.baselineRelation,
         trajectory: lifecycle.contextBefore.trajectory,
         stability:
           lifecycle.contextBefore.trajectory === 'volatile' ? 'low' : 'medium',
@@ -497,8 +498,8 @@ export class AdaptivePlannerEngine {
       ...this.#checkpointStates.slice(-(this.#config.trendWindowCount - 1)),
       state,
     ];
-    const first = recent[0]?.relativePosition;
-    const current = state.relativePosition;
+    const first = recent[0]?.robustDeltaFromBaseline;
+    const current = state.robustDeltaFromBaseline;
     const delta =
       recent.length < this.#config.trendWindowCount ||
       first === null ||
@@ -509,36 +510,36 @@ export class AdaptivePlannerEngine {
     const trend =
       delta === null
         ? 'insufficient-history'
-        : delta > this.#config.trendDeltaThreshold
-          ? 'toward-focus'
-          : delta < -this.#config.trendDeltaThreshold
-            ? 'toward-mind-wandering'
+        : delta > this.#config.robustDeltaTrendThreshold
+          ? 'increasing'
+          : delta < -this.#config.robustDeltaTrendThreshold
+            ? 'decreasing'
             : 'stable';
-    const previous =
-      this.#checkpointStates.at(-1)?.sustainedMindWanderingWindows ?? 0;
-    const sustained =
-      current !== null &&
-      current <= 1 - this.#config.mindWanderingLeaningThreshold
-        ? previous + 1
-        : 0;
+    const previous = this.#checkpointStates.at(-1);
     return {
       ...state,
       trend,
-      trendDeltaPerCheckpoint: delta,
-      relativePositionPrevious: recent.at(-2)?.relativePosition ?? null,
-      relativePositionSlope: delta,
+      robustDeltaPrevious: recent.at(-2)?.robustDeltaFromBaseline ?? null,
+      robustDeltaSlope: delta,
       trajectory:
         delta === null
           ? 'unavailable'
           : state.variabilityMad !== null &&
               state.variabilityMad > this.#config.highVariabilityMad
             ? 'volatile'
-            : delta > this.#config.trendDeltaThreshold
-              ? 'improving'
-              : delta < -this.#config.trendDeltaThreshold
-                ? 'declining'
+            : delta > this.#config.robustDeltaTrendThreshold
+              ? 'declining'
+              : delta < -this.#config.robustDeltaTrendThreshold
+                ? 'improving'
                 : 'stable',
-      sustainedMindWanderingWindows: sustained,
+      sustainedElevatedWindows:
+        state.baselineRelation === 'tbr-elevated'
+          ? (previous?.sustainedElevatedWindows ?? 0) + 1
+          : 0,
+      sustainedReducedWindows:
+        state.baselineRelation === 'tbr-reduced'
+          ? (previous?.sustainedReducedWindows ?? 0) + 1
+          : 0,
     };
   }
 }

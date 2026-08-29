@@ -11,10 +11,41 @@ export interface NeuroState {
   timestampMs: SessionTimestampMs;
   arousal: NeuroMetric;
   confidence?: number;
-  /** Optional Module 01 detail. `arousal` remains for protocol 1.0 compatibility. */
-  attention?: {
+  /** Optional Module 01 baseline-relative detail. */
+  attention?: BaselineRelativeAttentionState | LegacyTwoAnchorAttentionState;
+}
+
+export interface BaselineRelativeAttentionState {
     currentLogTbr: number | null;
-    /** Unbounded position on the empirical MW-reference (0) to focus-reference (1) axis. */
+    baselineLogTbr: number;
+    baselineMad: number;
+    baselineScale: number;
+    effectiveBaselineScale: number;
+    deltaFromBaseline: number | null;
+    tbrRatioToBaseline: number | null;
+    tbrPercentChange: number | null;
+    robustDeltaFromBaseline: number | null;
+    baselineRelation:
+      | 'baseline-consistent'
+      | 'tbr-elevated'
+      | 'tbr-reduced'
+      | 'uncertain';
+    robustDeltaSlope: number | null;
+    trajectory: string;
+    measurementConfidence: 'high' | 'medium' | 'low';
+    signalQuality: 'good' | 'fair' | 'poor' | 'unavailable';
+    stateEstimationVersion: 'guided_baseline_delta_v1';
+    trend: 'increasing' | 'decreasing' | 'stable' | 'insufficient-history';
+    variabilityMad: number | null;
+    sustainedElevatedWindows: number;
+    sustainedReducedWindows: number;
+    phase: 'opening' | 'adaptive' | 'closing';
+    validEpochCount: number;
+}
+
+/** Schema 1.3 replay only. New live sessions must never produce this shape. */
+export interface LegacyTwoAnchorAttentionState {
+    currentLogTbr: number | null;
     relativePosition?: number | null;
     referenceGap?: number;
     deltaFromFocus?: number | null;
@@ -40,5 +71,4 @@ export interface NeuroState {
     variabilityMad: number | null;
     phase: 'opening' | 'adaptive' | 'closing';
     validEpochCount: number;
-  };
 }

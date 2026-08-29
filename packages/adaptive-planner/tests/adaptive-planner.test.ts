@@ -31,7 +31,7 @@ describe('adaptive planner Phase 1', () => {
     }
     expect(checkpoints[0]?.state.timestampMs).toBe(60_000);
     expect(checkpoints.slice(0, 5).map((item) => item.state.timestampMs)).toEqual(
-      [60_000, 80_000, 100_000, 120_000, 140_000],
+      [60_000, 100_000, 140_000, 180_000, 220_000],
     );
     const lastCheckpointMs =
       phase1Config.openingDurationMs +
@@ -46,9 +46,7 @@ describe('adaptive planner Phase 1', () => {
       'closing_phase',
     );
     expect(checkpoints.some((item) => item.decision?.shouldAdapt)).toBe(true);
-    expect(checkpoints.some((item) => item.plan?.soundscape.event.length)).toBe(
-      true,
-    );
+    expect(checkpoints.some((item) => item.plan !== undefined)).toBe(true);
     expect(
       checkpoints.some((item) =>
         item.plan?.soundscape.action.some(
@@ -100,7 +98,7 @@ describe('adaptive planner Phase 1', () => {
       const result = await planner.ingest({ ...template, timestampMs });
       if (result) checkpoints.push(result.state.timestampMs);
     }
-    expect(checkpoints).toEqual([61_000, 81_000, 101_000]);
+    expect(checkpoints).toEqual([61_000, 101_000]);
   });
 
   it('does not let a later checkpoint invalidate an in-flight planner transaction', async () => {

@@ -7,7 +7,7 @@ import type {
 import { canonicalPlaybackPolicy } from '@neuroscape/contracts';
 import type { AdaptivePlannerConfig } from './config.js';
 
-export const BASE_PLAN_VERSION = 'base_plan_v3';
+export const BASE_PLAN_VERSION = 'base_plan_v4';
 export const ASSIGNMENT_RULE_VERSION = 'shared_base_v1';
 
 export type BasePlanPhaseId =
@@ -115,7 +115,7 @@ const phases = (): BasePlanPhase[] => [
 
 function profile(config: AdaptivePlannerConfig): BasePlanProfile {
   return {
-    profileId: 'forest_restrained_v1',
+    profileId: 'forest_ambient_only_v1',
     durationMs: config.sessionDurationMs,
     sceneFamily: 'forest',
     complexityEnvelopeId: 'meditation_restrained_v1',
@@ -148,36 +148,6 @@ const ambient = (
   payload: { id, assetId, mode: 'global', gain, active: true },
 });
 
-const event = (
-  id: string,
-  assetId: string,
-  at: number,
-  duration: number,
-  gain: number,
-  locationId: string,
-): BasePlanElement => ({
-  elementId: id,
-  assetId,
-  layer: 'event',
-  startMs: at,
-  endMs: at + duration,
-  gain,
-  salience: 0.25,
-  assetFamily: assetId.replace(/_\d+$/, ''),
-  spatialBehavior: 'stationary_distant',
-  adjustable: true,
-  replaceable: true,
-  suppressible: true,
-  payload: {
-    id,
-    assetId,
-    activationTimeMs: at,
-    durationMs: duration,
-    trajectory: [{ locationId, timestampMs: at }],
-    gain,
-  },
-});
-
 export function createForestBasePlan(
   config: AdaptivePlannerConfig,
 ): BaseScenePlan {
@@ -194,25 +164,7 @@ export function createForestBasePlan(
       defaultDurationMs: 5_000,
       curve: 'smoothstep' as const,
     },
-    scheduledElements: [
-      ambient('base-ambient', 'forest_ambient_bed_01', 0.38),
-      event(
-        'base-bird-early',
-        'forest_bird_far_01',
-        155_000,
-        8_000,
-        0.24,
-        'forest_entry',
-      ),
-      event(
-        'base-bird-late',
-        'forest_bird_far_02',
-        350_000,
-        8_000,
-        0.2,
-        'stream_bank',
-      ),
-    ],
+    scheduledElements: [ambient('base-ambient', 'forest_ambient_bed_01', 0.38)],
   };
 }
 
@@ -294,7 +246,7 @@ export function materializeBasePlan(plan: BaseScenePlan): SceneJourneyPlan {
     planId: plan.planId,
     planningHorizonSec: plan.profile.durationMs / 1000,
     reasoningSummary:
-      'Complete restrained Base Plan; maintain preserves its scheduled evolution.',
+      'Ambient-only shared Base Plan; the opening voice is played by the session audio layer and maintain preserves continuous forest ambience.',
     userJourney: structuredClone(plan.journey),
     soundscape: {
       ambient: plan.scheduledElements

@@ -20,7 +20,9 @@ export function AIAdaptationPanel() {
           <dt>Attention</dt>
           <dd>
             {neuro?.attention
-              ? `Reference-relative ${neuro.attention.relativePosition?.toFixed(2) ?? 'unavailable'} · ${neuro.attention.trajectory ?? neuro.attention.trend}`
+              ? 'baselineRelation' in neuro.attention
+                ? `Baseline-relative ${neuro.attention.robustDeltaFromBaseline?.toFixed(2) ?? 'unavailable'} · ${neuro.attention.baselineRelation}`
+                : `Legacy replay · ${neuro.attention.trajectory ?? neuro.attention.trend}`
               : neuro
                 ? `${Math.round(neuro.arousal.value * 100)}% · ${neuro.arousal.trend}`
                 : 'Unavailable'}

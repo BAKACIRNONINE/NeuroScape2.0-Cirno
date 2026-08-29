@@ -4,7 +4,8 @@ import type { RuntimeWorldState } from './runtime-world-state.js';
 import type { SceneJourneyPlan } from './scene-journey-plan.js';
 import type { AudioExecutionDiagnostic, AudioPlaybackEvidence } from './audio-playback-evidence.js';
 
-export const RECORDED_SESSION_SCHEMA_VERSION = '1.3';
+export const RECORDED_SESSION_SCHEMA_VERSION = '1.4';
+export const LEGACY_RECORDED_SESSION_SCHEMA_VERSION = '1.3';
 export interface RecordedSessionMetadata {
   sessionId: string;
   protocolVersion: string;
@@ -31,16 +32,38 @@ export interface RecordedSessionMetadata {
 }
 export interface RecordedCalibrationProfile {
   profileId: string;
-  focusedAnchorLogTbr: number;
-  mindWanderingAnchorLogTbr: number;
-  pooledMad: number;
-  mappingAvailable: boolean;
-  qualityStatus: 'pass' | 'provisional' | 'fail';
+  participantId?: string;
+  baselineLogTbr: number;
+  baselineMad: number;
+  baselineScale: number;
+  effectiveBaselineScale: number;
+  expectedEpochCount: 30;
+  validEpochCount: number;
+  invalidEpochCount: number;
+  baselineAvailable: boolean;
+  qualityStatus: 'pass' | 'fail';
+  qualityIssues: string[];
+  selfReportedFocus: number | null;
+  selfReportedDrowsiness: number | null;
   featureVersion: string;
 }
 export interface TimestampedRecord<T> {
   timestampMs: number;
   value: T;
+}
+export interface RecordedEegMetric {
+  timestampMs: number;
+  theta: number | null;
+  beta: number | null;
+  tbr: number | null;
+  tbrBaseline: number;
+  valid: boolean;
+  qualityScore: number;
+  artifactFlags: string[];
+}
+export interface RecordedDecisionEvent {
+  timestampMs: number;
+  type: 'decision-1' | 'decision-2';
 }
 export interface AdaptiveTraceRecord {
   timestampMs: number;
@@ -70,6 +93,8 @@ export interface RecordedSession {
   plannerEvents: TimestampedRecord<PlannerStatusPayload>[];
   /** Structured, user-study-safe rationale and inputs/outputs; never hidden chain-of-thought. */
   adaptiveTrace: AdaptiveTraceRecord[];
+  eegMetrics?: RecordedEegMetric[];
+  decisionEvents?: RecordedDecisionEvent[];
   audioPlaybackEvidence?: AudioPlaybackEvidence[];
   audioExecutionDiagnostics?: AudioExecutionDiagnostic[];
 }

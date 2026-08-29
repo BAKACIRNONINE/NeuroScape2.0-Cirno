@@ -13,18 +13,23 @@ import {
 
 describe('shared Base Plan and future patching', () => {
   const a = createForestBasePlan(phase1Config);
-  it('provides one complete restrained ambient-and-bird Base Plan', () => {
+  const patchable = structuredClone(a);
+  patchable.scheduledElements.push({
+    elementId: 'base-bird-early', assetId: 'forest_bird_far_01', layer: 'event',
+    startMs: 155_000, endMs: 163_000, gain: 0.24, salience: 0.25,
+    assetFamily: 'forest_bird_far', spatialBehavior: 'stationary_distant',
+    adjustable: true, replaceable: true, suppressible: true,
+    payload: { id: 'base-bird-early', assetId: 'forest_bird_far_01', activationTimeMs: 155_000,
+      durationMs: 8_000, trajectory: [{ locationId: 'forest_entry', timestampMs: 155_000 }], gain: 0.24 },
+  });
+  it('provides one complete ambient-only Base Plan', () => {
     expect(measureBasePlan(a)).toMatchObject({
       durationMs: 600_000,
       ambientCount: 1,
-      eventCount: 2,
+      eventCount: 0,
       bodyAnchorCount: 0,
     });
-    expect(a.scheduledElements.map((item) => item.assetId)).toEqual([
-      'forest_ambient_bed_01',
-      'forest_bird_far_01',
-      'forest_bird_far_02',
-    ]);
+    expect(a.scheduledElements.map((item) => item.assetId)).toEqual(['forest_ambient_bed_01']);
   });
   it('assigns the same plan to both experimental conditions', () => {
     const assignment = assignSharedBasePlan('P002');
@@ -34,10 +39,10 @@ describe('shared Base Plan and future patching', () => {
   it('hydrates canonical playback for every materialized Base Plan sound', () => {
     const materialized = materializeBasePlan(a);
     const sounds = [...materialized.soundscape.ambient, ...materialized.soundscape.action, ...materialized.soundscape.event];
-    expect(sounds).toHaveLength(3);
+    expect(sounds).toHaveLength(1);
     expect(sounds.every((sound) => sound.playback !== undefined)).toBe(true);
     expect(materialized.soundscape.ambient[0]?.playback).toEqual({ mode: 'loop', durationPolicy: 'loop-until-end' });
-    expect(materialized.soundscape.event[0]?.playback).toEqual({ mode: 'once', durationPolicy: 'truncate-at-end' });
+    expect(materialized.soundscape.event).toEqual([]);
   });
   it('fails before Runtime when canonical playback cannot be resolved', () => {
     const invalid = structuredClone(a);
@@ -66,7 +71,7 @@ describe('shared Base Plan and future patching', () => {
   it.each(['ADJUST', 'RESCHEDULE', 'REPLACE', 'SUPPRESS'] as const)(
     'accepts future %s without touching the freeze buffer',
     (kind) => {
-      const target = a.scheduledElements.find(
+      const target = patchable.scheduledElements.find(
         (e) => e.elementId === 'base-bird-early',
       )!;
       const operation = {
@@ -81,7 +86,7 @@ describe('shared Base Plan and future patching', () => {
       };
       expect(
         validateAndProjectPatch({
-          basePlan: a,
+          basePlan: patchable,
           acceptedPatches: [],
           proposedPatch: patch(operation),
           nowMs: 60_000,
@@ -91,12 +96,12 @@ describe('shared Base Plan and future patching', () => {
     },
   );
   it('rejects stale operations inside the minimal handoff buffer and non-minimal INSERT', () => {
-    const insertedElement = structuredClone(a.scheduledElements[1]!);
+    const insertedElement = structuredClone(patchable.scheduledElements[1]!);
     insertedElement.elementId = 'inserted';
     insertedElement.startMs = 200_100;
     insertedElement.endMs = 208_100;
     const result = validateAndProjectPatch({
-      basePlan: a,
+      basePlan: patchable,
       acceptedPatches: [],
       proposedPatch: patch({
         operation: 'INSERT',
@@ -124,7 +129,7 @@ describe('shared Base Plan and future patching', () => {
     };
     expect(
       validateAndProjectPatch({
-        basePlan: a,
+        basePlan: patchable,
         acceptedPatches: [],
         proposedPatch: noSafe,
         nowMs: 200_000,
@@ -134,7 +139,7 @@ describe('shared Base Plan and future patching', () => {
   });
   it('materializes ADJUST into the runtime payload rather than metadata only', () => {
     const result = validateAndProjectPatch({
-      basePlan: a,
+      basePlan: patchable,
       acceptedPatches: [],
       proposedPatch: patch({
         operation: 'ADJUST',
@@ -157,7 +162,7 @@ describe('shared Base Plan and future patching', () => {
 
   it('refreshes playback from the replacement asset contract', () => {
     const result = validateAndProjectPatch({
-      basePlan: a,
+      basePlan: patchable,
       acceptedPatches: [],
       proposedPatch: patch({ operation: 'REPLACE', targetElementId: 'base-bird-early', effectiveStartMs: 155_000, transitionMs: 1_000, replacementAssetId: 'forest_soft_owl_far_01' }),
       nowMs: 60_000,
@@ -204,12 +209,12 @@ describe('shared Base Plan and future patching', () => {
         rationale: 'test',
         provider: 'test',
       },
-      basePlan: a,
+      basePlan: patchable,
       nowMs: 220_000,
       freezeBufferMs: phase1Config.executionFreezeBufferMs,
     });
     const validation = validateAndProjectPatch({
-      basePlan: a,
+      basePlan: patchable,
       acceptedPatches: [],
       proposedPatch: futurePatch,
       nowMs: 220_000,
@@ -261,7 +266,7 @@ describe('shared Base Plan and future patching', () => {
         rationale: 'test',
         provider: 'test',
       },
-      basePlan: a,
+      basePlan: patchable,
       nowMs: 220_000,
       freezeBufferMs: phase1Config.executionFreezeBufferMs,
     });
@@ -279,7 +284,7 @@ describe('shared Base Plan and future patching', () => {
   });
 
   it('allows objective-safe INSERT without a textual minimality reason code', () => {
-    const insertedElement = structuredClone(a.scheduledElements[1]!);
+    const insertedElement = structuredClone(patchable.scheduledElements[1]!);
     insertedElement.elementId = 'objective-insert';
     insertedElement.assetId = 'forest_leaf_rustle_mid_01';
     insertedElement.assetFamily = 'forest_leaf_rustle_mid';
@@ -298,7 +303,7 @@ describe('shared Base Plan and future patching', () => {
     candidate.reasonCodes = [];
     expect(
       validateAndProjectPatch({
-        basePlan: a,
+        basePlan: patchable,
         acceptedPatches: [],
         proposedPatch: candidate,
         nowMs: 220_000,
@@ -309,7 +314,7 @@ describe('shared Base Plan and future patching', () => {
 
   it('allows an active target to be adjusted but rejects duplicate active-asset INSERT', () => {
     const adjust = validateAndProjectPatch({
-      basePlan: a,
+      basePlan: patchable,
       acceptedPatches: [],
       proposedPatch: patch({
         operation: 'ADJUST',
@@ -327,7 +332,7 @@ describe('shared Base Plan and future patching', () => {
     duplicate.elementId = 'duplicate-active-bed';
     duplicate.startMs = 220_250;
     const duplicateResult = validateAndProjectPatch({
-      basePlan: a,
+      basePlan: patchable,
       acceptedPatches: [],
       proposedPatch: patch({
         operation: 'INSERT',
@@ -382,7 +387,7 @@ describe('shared Base Plan and future patching', () => {
           rationale: 'test',
           provider: 'test',
         },
-        basePlan: a,
+        basePlan: patchable,
         nowMs,
         freezeBufferMs: phase1Config.executionFreezeBufferMs,
       });

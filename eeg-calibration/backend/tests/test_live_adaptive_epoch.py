@@ -14,6 +14,11 @@ def test_live_epoch_starts_after_calibration_and_emits_new_tbr(make_samples):
     service.result = {
         "feature_version": FEATURE_VERSION,
         "ready_to_continue": True,
+        "baseline_log_tbr": 1.0,
+        "baseline_mad": 0.1,
+        "baseline_scale": 0.14826,
+        "effective_baseline_scale": 0.14826,
+        "baseline_available": True,
     }
 
     start = service.start_live_session()
@@ -33,6 +38,8 @@ def test_live_epoch_starts_after_calibration_and_emits_new_tbr(make_samples):
     assert epoch["end_sample_index"] == 5119
     assert epoch["valid"] is True
     assert epoch["log_tbr"] is not None
+    assert epoch["theta"] is not None
+    assert epoch["beta"] is not None
     assert epoch["quality_score"] > 0.9
 
 

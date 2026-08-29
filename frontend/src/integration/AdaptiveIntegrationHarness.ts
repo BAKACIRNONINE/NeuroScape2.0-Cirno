@@ -67,7 +67,7 @@ export interface AdaptiveHarnessStartOptions {
   condition?: 'adaptive' | 'non-adaptive';
 }
 export interface AdaptiveEpochSource {
-  next(): Promise<TbrEpoch | null>;
+  next(sessionTimestampMs?: number): Promise<TbrEpoch | null>;
 }
 export interface AdaptiveIntervalApi {
   set(callback: () => void, milliseconds: number): unknown;
@@ -77,6 +77,19 @@ const intervals: AdaptiveIntervalApi = {
   set: (callback, milliseconds) => setInterval(callback, milliseconds),
   clear: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
 };
+
+export function attentionStateForEpoch(
+  result: AdaptiveCheckpointResult | null,
+  states: readonly AttentionState[],
+  epochTimestampMs: number,
+): AttentionState | undefined {
+  if (result?.state.timestampMs === epochTimestampMs) return result.state;
+  for (let index = states.length - 1; index >= 0; index -= 1) {
+    const state = states[index];
+    if (state?.timestampMs === epochTimestampMs) return state;
+  }
+  return undefined;
+}
 
 export class AdaptiveIntegrationHarness {
   readonly #store: RuntimeStore;
@@ -93,6 +106,7 @@ export class AdaptiveIntegrationHarness {
   #epochIndex = 0;
   #replay = createMockTbrReplay();
   #epochSource: AdaptiveEpochSource | null = null;
+  #calibrationProfile = mockCalibrationProfile;
   #sessionDurationMs = phase1Config.sessionDurationMs;
   #state: AdaptiveHarnessState = {
     status: 'idle',
@@ -130,6 +144,7 @@ export class AdaptiveIntegrationHarness {
     this.#plannerMode = options.plannerMode ?? 'openai';
     this.#condition = options.condition ?? 'adaptive';
     this.#epochSource = options.epochSource ?? null;
+    this.#calibrationProfile = options.calibrationProfile ?? mockCalibrationProfile;
     this.#sessionDurationMs =
       options.sessionDurationMs ?? phase1Config.sessionDurationMs;
     this.#store.getState().resetSessionStreams();
@@ -139,9 +154,10 @@ export class AdaptiveIntegrationHarness {
     this.#unsubscribeEvidence = audioEngine.subscribePlaybackEvidence(
       (evidence) => this.handlePlaybackEvidence(evidence),
     );
-    this.#unsubscribeAudioDiagnostics = audioEngine.subscribeExecutionDiagnostics(
-      (diagnostic) => sessionRecorder.appendAudioExecutionDiagnostic(diagnostic),
-    );
+    this.#unsubscribeAudioDiagnostics =
+      audioEngine.subscribeExecutionDiagnostics((diagnostic) =>
+        sessionRecorder.appendAudioExecutionDiagnostic(diagnostic),
+      );
     runtimeDiagnostics.reset();
     this.#runtime = this.createRuntime();
     const assignment = assignSharedBasePlan(options.participantId ?? 'P001');
@@ -151,7 +167,7 @@ export class AdaptiveIntegrationHarness {
       this.#condition === 'adaptive'
         ? new AdaptivePlannerEngine({
             config: phase1Config,
-            profile: options.calibrationProfile ?? mockCalibrationProfile,
+            profile: this.#calibrationProfile,
             initialPlan,
             basePlan,
             decisionProvider:
@@ -256,7 +272,7 @@ export class AdaptiveIntegrationHarness {
       );
       const epochs: TbrEpoch[] = [];
       if (this.#epochSource) {
-        const epoch = await this.#epochSource.next();
+        const epoch = await this.#epochSource.next(nextTimestamp);
         if (epoch) epochs.push(epoch);
       } else {
         while (
@@ -266,7 +282,6 @@ export class AdaptiveIntegrationHarness {
           epochs.push(this.#replay[this.#epochIndex++]!);
       }
       for (const epoch of epochs) {
-        if (!this.#planner) continue;
         this.trace(
           epoch.timestampMs,
           'eeg-epoch',
@@ -274,7 +289,21 @@ export class AdaptiveIntegrationHarness {
           `${this.#epochSource ? 'Live Muse' : 'Mock'} log-TBR epoch ${epoch.valid ? 'accepted' : 'rejected'}`,
           epoch,
         );
-        if (this.#plannerMode === 'openai') void this.processEpoch(epoch);
+        sessionRecorder.appendEegMetric({
+          timestampMs: epoch.timestampMs,
+          theta: epoch.theta ?? null,
+          beta: epoch.beta ?? null,
+          tbr: epoch.logTbr,
+          tbrBaseline: this.#calibrationProfile.baselineLogTbr,
+          valid: epoch.valid,
+          qualityScore: epoch.qualityScore,
+          artifactFlags: [...epoch.artifactFlags],
+        });
+        if (!this.#planner) continue;
+        if (this.#plannerMode === 'openai')
+          void this.processEpoch(epoch).catch((error) =>
+            this.handleUnhandledEpochError(epoch, error),
+          );
         else await this.processEpoch(epoch);
       }
       const startedAt = performance.now();
@@ -323,11 +352,18 @@ export class AdaptiveIntegrationHarness {
       });
     }
     if (planner !== this.#planner || this.#state.status !== 'running') return;
-    const state = result?.state ?? planner.attentionStates.at(-1);
+    // OpenAI checkpoints run without blocking the audio/runtime clock. A slow
+    // older request can therefore finish after newer epochs have already been
+    // interpreted. Never pair that older epoch envelope with the latest state.
+    const state = attentionStateForEpoch(
+      result,
+      planner.attentionStates,
+      epoch.timestampMs,
+    );
     if (state)
       this.dispatch(
         'NeuroState',
-        epoch.timestampMs,
+        state.timestampMs,
         this.toProtocolNeuroState(state),
       );
     if (!result) return;
@@ -359,6 +395,21 @@ export class AdaptiveIntegrationHarness {
     }
   }
 
+  private handleUnhandledEpochError(epoch: TbrEpoch, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    this.trace(
+      epoch.timestampMs,
+      'llm-error',
+      this.#plannerMode === 'openai' ? 'openai' : 'mock-llm',
+      `Unhandled epoch processing error: ${message}`,
+      {
+        message,
+        plannerMode: this.#plannerMode,
+        fallback: 'continue_base_plan',
+      },
+    );
+  }
+
   private handleCheckpoint(result: AdaptiveCheckpointResult): void {
     this.#state = {
       ...this.#state,
@@ -368,7 +419,7 @@ export class AdaptiveIntegrationHarness {
       result.state.timestampMs,
       'attention-state',
       'deterministic',
-      `${result.state.label}; trend ${result.state.trend}`,
+      `${result.state.baselineRelation}; trend ${result.state.trend}`,
       result.state,
     );
     if (result.outcome) {
@@ -566,37 +617,40 @@ export class AdaptiveIntegrationHarness {
   }
 
   private toProtocolNeuroState(state: AttentionState): NeuroState {
-    const focus = state.focusPosition ?? 0.5;
     return {
       timestampMs: state.timestampMs,
       arousal: {
-        value: focus,
+        // Protocol 1.0 compatibility only; baseline reasoning lives in
+        // `attention` and this value must not be rendered as focus percentage.
+        value: 0.5,
         trend:
-          state.trend === 'toward-focus'
+          state.trend === 'increasing'
             ? 'increasing'
-            : state.trend === 'toward-mind-wandering'
+            : state.trend === 'decreasing'
               ? 'decreasing'
               : 'stable',
       },
       confidence: state.confidence,
       attention: {
         currentLogTbr: state.currentLogTbr,
-        relativePosition: state.relativePosition,
-        referenceGap: state.referenceGap,
-        deltaFromFocus: state.deltaFromFocus,
-        deltaFromMindWandering: state.deltaFromMindWandering,
-        coverage: state.coverage,
+        baselineLogTbr: state.baselineLogTbr,
+        baselineMad: state.baselineMad,
+        baselineScale: state.baselineScale,
+        effectiveBaselineScale: state.effectiveBaselineScale,
+        deltaFromBaseline: state.deltaFromBaseline,
+        tbrRatioToBaseline: state.tbrRatioToBaseline,
+        tbrPercentChange: state.tbrPercentChange,
+        robustDeltaFromBaseline: state.robustDeltaFromBaseline,
+        baselineRelation: state.baselineRelation,
         trajectory: state.trajectory,
-        relativePositionSlope: state.relativePositionSlope,
+        robustDeltaSlope: state.robustDeltaSlope,
         measurementConfidence: state.measurementConfidence,
-        calibrationQuality: state.calibrationQuality,
         signalQuality: state.signalQuality,
         stateEstimationVersion: state.stateEstimationVersion,
-        focusPosition: state.focusPosition,
-        mindWanderingPosition: state.mindWanderingPosition,
-        label: state.label,
         trend: state.trend,
         variabilityMad: state.variabilityMad,
+        sustainedElevatedWindows: state.sustainedElevatedWindows,
+        sustainedReducedWindows: state.sustainedReducedWindows,
         phase: state.phase,
         validEpochCount: state.validEpochCount,
       },

@@ -6,6 +6,7 @@ import {
 } from './SessionRecorder.js';
 
 let current: RecordedSession | null = null;
+const completed = new Map<'adaptive' | 'non-adaptive', RecordedSession>();
 const listeners = new Set<() => void>();
 export const sessionRecorder = new SessionRecorder(runtimeStore);
 export const recordingStore = {
@@ -21,9 +22,17 @@ export const recordingStore = {
   },
   stop: () => {
     current = sessionRecorder.stop();
+    if (current?.metadata.runMode === 'non-adaptive')
+      completed.set('non-adaptive', structuredClone(current));
+    else if (current?.metadata.runMode === 'study-realtime')
+      completed.set('adaptive', structuredClone(current));
     listeners.forEach((listener) => listener());
     return current;
   },
+  completed: () => ({
+    adaptive: completed.get('adaptive') ?? null,
+    nonAdaptive: completed.get('non-adaptive') ?? null,
+  }),
   set: (recording: RecordedSession) => {
     current = recording;
     listeners.forEach((listener) => listener());

@@ -165,8 +165,8 @@ export function evaluateAdaptationOutcome(options: {
   if (
     postState.signalQuality === 'poor' ||
     postState.signalQuality === 'unavailable' ||
-    postState.calibrationQuality === 'unusable' ||
-    postState.calibrationQuality === 'low'
+    postState.measurementConfidence === 'low' ||
+    postState.baselineRelation === 'uncertain'
   )
     return {
       ...base,
@@ -189,22 +189,22 @@ export function evaluateAdaptationOutcome(options: {
           : 'CONCURRENT_OR_VOLATILE',
       ],
     };
-  const pre = lifecycle.contextBefore.relativePosition;
-  const post = postState.relativePosition;
+  const pre = lifecycle.contextBefore.robustDeltaFromBaseline;
+  const post = postState.robustDeltaFromBaseline;
   const delta = pre === null || post === null ? null : post - pre;
   if (delta === null)
     return {
       ...base,
       observedResponse: 'inconclusive',
       outcomeConfidence: 'unavailable',
-      reasonCodes: ['POSITION_UNAVAILABLE'],
+      reasonCodes: ['BASELINE_DELTA_UNAVAILABLE'],
     };
   const aligned =
     postState.trajectory === 'improving' ||
     (lifecycle.contextBefore.trajectory === 'declining' &&
       postState.trajectory === 'stable') ||
-    delta > 0.05;
-  const opposed = postState.trajectory === 'declining' && delta < -0.05;
+    delta < -0.25;
+  const opposed = postState.trajectory === 'declining' && delta > 0.25;
   return {
     ...base,
     observedResponse: aligned

@@ -56,7 +56,6 @@ export function createStudyArtifactBundle(
 ): StudyArtifactBundle {
   const participantId = recording.metadata.participantId ?? 'UNASSIGNED';
   const sessionId = recording.metadata.sessionId;
-  const eegEpochs = trace(recording, 'eeg-epoch');
   const recordedErrors = trace(recording, 'llm-error').map(
     (item) => `${item.timestampMs}ms · ${item.summary}`,
   );
@@ -71,15 +70,10 @@ export function createStudyArtifactBundle(
       filename: 'eeg-epochs.csv',
       mimeType: 'text/csv',
       content: csv(
-        ['timestampMs', 'logTbr', 'valid', 'qualityScore', 'artifactFlags'],
-        eegEpochs.map((item) => [
-          item.timestampMs,
-          item.data.logTbr,
-          item.data.valid,
-          item.data.qualityScore,
-          Array.isArray(item.data.artifactFlags)
-            ? item.data.artifactFlags.join('|')
-            : '',
+        ['timestampMs', 'theta', 'beta', 'logTbr', 'tbrBaseline', 'valid', 'qualityScore', 'artifactFlags'],
+        (recording.eegMetrics ?? []).map((item) => [
+          item.timestampMs, item.theta, item.beta, item.tbr, item.tbrBaseline,
+          item.valid, item.qualityScore, item.artifactFlags.join('|'),
         ]),
       ),
     },
@@ -90,49 +84,60 @@ export function createStudyArtifactBundle(
         [
           'timestampMs',
           'currentLogTbr',
-          'relativePositionUnbounded',
-          'referenceGap',
-          'deltaFromFocus',
-          'deltaFromMindWandering',
-          'coverage',
+          'baselineLogTbr',
+          'baselineMad',
+          'baselineScale',
+          'effectiveBaselineScale',
+          'deltaFromBaseline',
+          'tbrRatioToBaseline',
+          'tbrPercentChange',
+          'robustDeltaFromBaseline',
+          'baselineRelation',
           'trajectory',
-          'relativePositionSlope',
+          'robustDeltaSlope',
           'measurementConfidence',
-          'calibrationQuality',
           'signalQuality',
           'stateEstimationVersion',
-          'focusPosition',
-          'mindWanderingPosition',
-          'label',
           'trend',
           'variabilityMad',
+          'sustainedElevatedWindows',
+          'sustainedReducedWindows',
           'phase',
           'confidence',
           'validEpochCount',
         ],
-        recording.neuroStates.map((item) => [
-          item.timestampMs,
-          item.attention?.currentLogTbr,
-          item.attention?.relativePosition,
-          item.attention?.referenceGap,
-          item.attention?.deltaFromFocus,
-          item.attention?.deltaFromMindWandering,
-          item.attention?.coverage,
-          item.attention?.trajectory,
-          item.attention?.relativePositionSlope,
-          item.attention?.measurementConfidence,
-          item.attention?.calibrationQuality,
-          item.attention?.signalQuality,
-          item.attention?.stateEstimationVersion,
-          item.attention?.focusPosition,
-          item.attention?.mindWanderingPosition,
-          item.attention?.label,
-          item.attention?.trend,
-          item.attention?.variabilityMad,
-          item.attention?.phase,
-          item.confidence,
-          item.attention?.validEpochCount,
-        ]),
+        recording.neuroStates.map((item) => {
+          const attention = item.attention;
+          const baseline =
+            attention && 'baselineLogTbr' in attention
+              ? attention
+              : undefined;
+          return [
+            item.timestampMs,
+            attention?.currentLogTbr,
+            baseline?.baselineLogTbr,
+            baseline?.baselineMad,
+            baseline?.baselineScale,
+            baseline?.effectiveBaselineScale,
+            baseline?.deltaFromBaseline,
+            baseline?.tbrRatioToBaseline,
+            baseline?.tbrPercentChange,
+            baseline?.robustDeltaFromBaseline,
+            baseline?.baselineRelation,
+            attention?.trajectory,
+            baseline?.robustDeltaSlope,
+            attention?.measurementConfidence,
+            attention?.signalQuality,
+            attention?.stateEstimationVersion,
+            attention?.trend,
+            attention?.variabilityMad,
+            baseline?.sustainedElevatedWindows,
+            baseline?.sustainedReducedWindows,
+            attention?.phase,
+            item.confidence,
+            attention?.validEpochCount,
+          ];
+        }),
       ),
     },
     {

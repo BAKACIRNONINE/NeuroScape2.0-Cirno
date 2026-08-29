@@ -8,18 +8,29 @@ import type {
 
 export function evaluateEligibility(
   state: AttentionState,
-  _profile: CalibrationProfile,
+  profile: CalibrationProfile,
   history: readonly AdaptationHistoryItem[],
   config: AdaptivePlannerConfig,
   transitionUntilMs = 0,
-  stasisPressure = false,
+  _stasisPressure = false,
 ): EligibilityResult {
   const reasons: string[] = [];
+  if (
+    profile.featureVersion !==
+    'raw_welch_frontal_log_tbr_guided_baseline_protocol_v5'
+  )
+    reasons.push('unsupported_calibration_feature_version');
+  if (!profile.baselineAvailable || profile.qualityStatus !== 'pass')
+    reasons.push('baseline_unavailable');
   if (state.phase === 'opening') reasons.push('opening_phase');
   // An in-progress fade is context for the planners and validator, not a
   // global prohibition on an independent future adaptation.
-  if (state.validEpochCount < config.minimumValidEpochs && !stasisPressure)
+  if (state.validEpochCount < config.minimumValidEpochs)
     reasons.push('insufficient_valid_epochs');
+  if (state.confidence < config.minimumConfidence)
+    reasons.push('insufficient_measurement_confidence');
+  if (transitionUntilMs > state.timestampMs)
+    reasons.push('protected_transition_in_progress');
   const lastExperiencedAdaptation = [...history]
     .reverse()
     .find((item) => item.experiencedAtMs !== undefined);

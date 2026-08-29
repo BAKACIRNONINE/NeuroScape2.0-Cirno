@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   DECISION_1_PROMPT_VERSION,
+  AttentionInterpreter,
   OpenAIDecisionProvider,
   OpenAIPlanningProvider,
   initialForestPlan,
   phase1Config,
   prepareDecision2Input,
 } from '../src/index.js';
+import { mockCalibrationProfile } from '../src/fixtures.js';
 import type {
   AdaptationDecision,
   DecisionContext,
@@ -22,38 +24,14 @@ const usage: LlmUsage = {
 
 const context = (): DecisionContext => ({
   state: {
-    timestampMs: 180_000,
-    phase: 'adaptive',
-    currentLogTbr: 1.7,
-    focusReferenceLogTbr: 1,
-    mindWanderingReferenceLogTbr: 1.8,
-    referenceGap: -0.8,
-    referenceGapAbs: 0.8,
-    calibrationNoise: 0.12,
-    separationRatio: 6.7,
-    calibrationQuality: 'high',
-    measurementConfidence: 'high',
-    signalQuality: 'good',
-    relativePosition: 0.125,
-    deltaFromFocus: 0.7,
-    deltaFromMindWandering: -0.1,
-    nearestReference: 'mind-wandering',
-    coverage: 'between-references',
-    relativePositionPrevious: 0.2,
-    relativePositionSlope: -0.08,
+    ...new AttentionInterpreter(mockCalibrationProfile, {
+      ...phase1Config,
+      minimumValidEpochs: 1,
+    }).ingest({ timestampMs: 180_000, logTbr: 1.3, valid: true, qualityScore: 0.95, artifactFlags: [] }),
+    baselineRelation: 'tbr-elevated',
     trajectory: 'declining',
-    stateEstimationVersion: 'reference_unbounded_v2',
-    focusPosition: 0.12,
-    mindWanderingPosition: 0.88,
-    unboundedMindWanderingPosition: 0.88,
-    label: 'mind-wandering-leaning',
-    trend: 'toward-mind-wandering',
-    trendDeltaPerCheckpoint: 0.08,
-    variabilityMad: 0.04,
-    sustainedMindWanderingWindows: 3,
-    confidence: 0.9,
-    validEpochCount: 6,
   },
+  profile: mockCalibrationProfile,
   recentStates: [],
   currentPlan: structuredClone(initialForestPlan),
   history: [],
@@ -93,7 +71,7 @@ describe('OpenAI planner providers', () => {
           salience: 'low',
           scope: 'within-scene',
           evidence_summary: {
-            position: 'mind-wandering-leaning',
+            relation: 'tbr-elevated',
             trajectory: 'declining',
             confidence: 'high',
           },
@@ -112,13 +90,13 @@ describe('OpenAI planner providers', () => {
       'Eligibility does not itself mean an adaptation is necessary',
     );
     expect(String(requestBody?.prompt)).toContain(
-      'relativePosition is unbounded',
+      'Positive delta means TBR is higher than baseline',
     );
     expect(String(requestBody?.prompt)).toContain(
-      'Sustained focus does not automatically require maintain',
+      'empirical guided-breathing reference',
     );
     expect(String(requestBody?.prompt)).toContain(
-      'prioritize the system-observable soundscape hierarchy and asset quality',
+      'does not objectively detect mind wandering',
     );
     expect(String(requestBody?.prompt)).toContain(
       'adaptationProgress is a soft session-level target',
@@ -135,7 +113,7 @@ describe('OpenAI planner providers', () => {
       intent: 'gently_reorient_attention',
       salience: 'low',
       evidenceSummary: {
-        position: 'mind-wandering-leaning',
+        relation: 'tbr-elevated',
         trajectory: 'declining',
         confidence: 'high',
       },
@@ -153,7 +131,7 @@ describe('OpenAI planner providers', () => {
       'rank compatible candidates by authored quality and system suitability',
     );
     expect(input.prompt).toContain('"active":false');
-    value.state.calibrationQuality = 'low';
+    value.profile = { ...value.profile, qualityStatus: 'fail' };
     value.state.measurementConfidence = 'low';
     expect(prepareDecision2Input(value, decision, phase1Config).prompt).toContain(
       '"active":true',
@@ -226,7 +204,7 @@ describe('OpenAI planner providers', () => {
           salience: 'low',
           scope: 'within-scene',
           evidence_summary: {
-            position: 'intermediate',
+            relation: 'baseline-consistent',
             trajectory: 'stable',
             confidence: 'medium',
           },

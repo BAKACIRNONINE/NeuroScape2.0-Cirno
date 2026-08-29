@@ -34,10 +34,10 @@ describe('experienced-adaptation cooldown', () => {
     ).toMatchObject({ eligible: true, reasons: ['eligible'] });
   });
 
-  it('blocks for ten seconds after AUDIO_STARTED and allows equality', () => {
+  it('blocks for eighty seconds after AUDIO_STARTED and allows equality', () => {
     expect(
       evaluateEligibility(
-        stateAt(19_999),
+        stateAt(89_999),
         mockCalibrationProfile,
         [historyItem(10_000)],
         phase1Config,
@@ -45,7 +45,7 @@ describe('experienced-adaptation cooldown', () => {
     ).toContain('adaptation_cooldown');
     expect(
       evaluateEligibility(
-        stateAt(20_000),
+        stateAt(90_000),
         mockCalibrationProfile,
         [historyItem(10_000)],
         phase1Config,

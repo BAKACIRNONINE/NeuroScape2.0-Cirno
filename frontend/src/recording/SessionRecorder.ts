@@ -80,6 +80,8 @@ export class SessionRecorder {
       sessionEvents: [],
       plannerEvents: [],
       adaptiveTrace: [],
+      eegMetrics: [],
+      decisionEvents: [],
       audioPlaybackEvidence: [],
       audioExecutionDiagnostics: [],
     };
@@ -104,8 +106,18 @@ export class SessionRecorder {
     return this.#recording ? structuredClone(this.#recording) : null;
   }
   appendAdaptiveTrace(record: AdaptiveTraceRecord): void {
-    if (this.#recording)
+    if (this.#recording) {
       this.#recording.adaptiveTrace.push(structuredClone(record));
+      if (record.kind === 'decision-1' || record.kind === 'decision-2')
+        (this.#recording.decisionEvents ??= []).push({
+          timestampMs: record.timestampMs,
+          type: record.kind,
+        });
+    }
+  }
+  appendEegMetric(metric: NonNullable<RecordedSession['eegMetrics']>[number]): void {
+    if (this.#recording)
+      (this.#recording.eegMetrics ??= []).push(structuredClone(metric));
   }
   appendAudioPlaybackEvidence(evidence: AudioPlaybackEvidence): void {
     if (this.#recording)

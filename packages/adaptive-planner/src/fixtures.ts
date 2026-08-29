@@ -3,12 +3,19 @@ import type { CalibrationProfile, TbrEpoch } from './types.js';
 
 export const mockCalibrationProfile: CalibrationProfile = Object.freeze({
   profileId: 'mock-calibration-01',
-  focusedAnchorLogTbr: 1.0,
-  mindWanderingAnchorLogTbr: 1.8,
-  pooledMad: 0.08,
-  mappingAvailable: true,
-  qualityStatus: 'provisional',
-  featureVersion: 'raw_welch_frontal_log_tbr_median_block_protocol_v4',
+  baselineLogTbr: 1,
+  baselineMad: 0.08,
+  baselineScale: 0.118608,
+  effectiveBaselineScale: 0.118608,
+  expectedEpochCount: 30,
+  validEpochCount: 28,
+  invalidEpochCount: 2,
+  baselineAvailable: true,
+  qualityStatus: 'pass',
+  qualityIssues: [],
+  selfReportedFocus: 5,
+  selfReportedDrowsiness: 2,
+  featureVersion: 'raw_welch_frontal_log_tbr_guided_baseline_protocol_v5',
 });
 
 export const initialForestPlan: SceneJourneyPlan = {

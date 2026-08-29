@@ -9,7 +9,7 @@ from scipy.signal import butter, filtfilt, iirnotch, sosfiltfilt, welch
 from app import config
 from app.models.schemas import EEGSample
 
-FEATURE_VERSION = "raw_welch_frontal_log_tbr_median_block_protocol_v4"
+FEATURE_VERSION = "raw_welch_frontal_log_tbr_guided_baseline_protocol_v5"
 INCOMPATIBLE_PROFILE_MESSAGE = "Incompatible calibration profile. Please recalibrate."
 
 
@@ -27,6 +27,8 @@ class EpochResult:
     packet_completeness: float
     peak_to_peak_uv: dict[str, float | None]
     quality_flags: list[str] = field(default_factory=list)
+    theta_power: float | None = None
+    beta_power: float | None = None
 
     @property
     def usable(self) -> bool:
@@ -43,6 +45,8 @@ class EpochResult:
             "peak_to_peak_uv": self.peak_to_peak_uv,
             "epoch_tbr": self.tbr,
             "channel_tbr": self.channel_tbr,
+            "theta_power": self.theta_power,
+            "beta_power": self.beta_power,
         }
 
 
@@ -130,6 +134,8 @@ def analyze_segment(samples: list[EEGSample]) -> list[EpochResult]:
         completeness = packet_completeness(epoch)
         invalid: dict[str, list[str]] = {}
         channel_tbrs: dict[str, float] = {}
+        channel_theta: dict[str, float] = {}
+        channel_beta: dict[str, float] = {}
         peak_to_peak: dict[str, float | None] = {}
         quality_flags = ["blink_overlap"] if any(sample.blink for sample in epoch) else []
         for channel in ("af7", "af8"):
@@ -155,7 +161,13 @@ def analyze_segment(samples: list[EEGSample]) -> list[EpochResult]:
                 invalid[label] = reasons
             else:
                 try:
-                    channel_tbrs[label] = channel_log_tbr(values)
+                    theta = band_power(values, 4.0, 8.0, include_high=False)
+                    beta = band_power(values, 13.0, 30.0, include_high=True)
+                    channel_theta[label] = theta
+                    channel_beta[label] = beta
+                    channel_tbrs[label] = float(
+                        np.log((theta + config.EPSILON) / (beta + config.EPSILON))
+                    )
                 except (ValueError, FloatingPointError):
                     invalid[label] = ["spectral_calculation"]
         epoch_tbr = float(np.median(list(channel_tbrs.values()))) if channel_tbrs else None
@@ -169,6 +181,8 @@ def analyze_segment(samples: list[EEGSample]) -> list[EpochResult]:
                 completeness,
                 peak_to_peak,
                 quality_flags,
+                float(np.median(list(channel_theta.values()))) if channel_theta else None,
+                float(np.median(list(channel_beta.values()))) if channel_beta else None,
             )
         )
     return results
@@ -184,7 +198,7 @@ def median_value(values: Iterable[float | None]) -> float | None:
     return float(np.median(finite)) if finite else None
 
 
-def pooled_mad(values: Iterable[float | None]) -> float | None:
+def baseline_mad(values: Iterable[float | None]) -> float | None:
     finite = np.asarray(
         [float(value) for value in values if value is not None and np.isfinite(value)],
         dtype=float,
@@ -195,45 +209,27 @@ def pooled_mad(values: Iterable[float | None]) -> float | None:
     return float(np.median(np.abs(finite - center)))
 
 
-def anchor_summary(focused_values: list[float], free_thought_values: list[float]) -> dict:
-    focused_anchor = median_value(focused_values)
-    free_thought_anchor = median_value(free_thought_values)
-    difference = (
-        None
-        if focused_anchor is None or free_thought_anchor is None
-        else float(free_thought_anchor - focused_anchor)
-    )
-    variability = pooled_mad([*focused_values, *free_thought_values])
-    separation_score = (
-        None
-        if difference is None or variability is None
-        else float(abs(difference) / (variability + config.EPSILON))
-    )
-    if difference is None:
-        direction = None
-    elif difference > 0:
-        direction = "free_thought_higher"
-    elif difference < 0:
-        direction = "focused_higher"
-    else:
-        direction = "no_difference"
+def baseline_summary(values: Iterable[float | None]) -> dict:
+    baseline = median_value(values)
+    variability = baseline_mad(values)
+    scale = None if variability is None else float(1.4826 * variability)
     return {
-        "focused_meditation_anchor": focused_anchor,
-        "free_thought_anchor": free_thought_anchor,
-        "difference": difference,
-        "direction": direction,
-        "pooled_mad": variability,
-        "separation_score": separation_score,
-        "separation_assessment": {
-            "status": "pilot_threshold_not_configured",
-            "minimum_absolute_difference": config.MIN_ABSOLUTE_ANCHOR_DIFFERENCE,
-            "minimum_separation_score": config.MIN_SEPARATION_SCORE,
-            "require_free_thought_higher": config.REQUIRE_FREE_THOUGHT_HIGHER,
-        },
+        "baseline_log_tbr": baseline,
+        "baseline_mad": variability,
+        "baseline_scale": scale,
     }
 
 
 def validate_calibration_profile(profile: dict) -> dict:
     if profile.get("feature_version") != FEATURE_VERSION:
+        raise IncompatibleCalibrationProfile(INCOMPATIBLE_PROFILE_MESSAGE)
+    required = (
+        "baseline_log_tbr",
+        "baseline_mad",
+        "baseline_scale",
+        "effective_baseline_scale",
+        "baseline_available",
+    )
+    if any(key not in profile for key in required):
         raise IncompatibleCalibrationProfile(INCOMPATIBLE_PROFILE_MESSAGE)
     return profile

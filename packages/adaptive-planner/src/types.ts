@@ -18,27 +18,25 @@ import type {
 } from './reflection.js';
 
 export type SessionPhase = 'opening' | 'adaptive' | 'closing';
-export type AttentionLabel =
-  'focus-leaning' | 'intermediate' | 'mind-wandering-leaning' | 'uncertain';
-export type AttentionTrend =
-  'toward-focus' | 'toward-mind-wandering' | 'stable' | 'insufficient-history';
-export type ReferenceCoverage =
-  | 'between-references'
-  | 'beyond-focus-reference'
-  | 'beyond-mind-wandering-reference'
-  | 'at-or-near-reference'
-  | 'unavailable';
 export type StateTrajectory =
   'improving' | 'stable' | 'declining' | 'volatile' | 'unavailable';
 export type ConfidenceLevel = 'high' | 'medium' | 'low';
 
 export interface CalibrationProfile {
   profileId: string;
-  focusedAnchorLogTbr: number;
-  mindWanderingAnchorLogTbr: number;
-  pooledMad: number;
-  mappingAvailable: boolean;
-  qualityStatus: 'pass' | 'provisional' | 'fail';
+  participantId?: string;
+  baselineLogTbr: number;
+  baselineMad: number;
+  baselineScale: number;
+  effectiveBaselineScale: number;
+  expectedEpochCount: 30;
+  validEpochCount: number;
+  invalidEpochCount: number;
+  baselineAvailable: boolean;
+  qualityStatus: 'pass' | 'fail';
+  qualityIssues: string[];
+  selfReportedFocus: number | null;
+  selfReportedDrowsiness: number | null;
   featureVersion: string;
 }
 
@@ -48,40 +46,37 @@ export interface TbrEpoch {
   valid: boolean;
   qualityScore: number;
   artifactFlags: string[];
+  theta?: number | null;
+  beta?: number | null;
 }
 
 export interface AttentionState {
   timestampMs: number;
   phase: SessionPhase;
   currentLogTbr: number | null;
-  focusReferenceLogTbr: number;
-  mindWanderingReferenceLogTbr: number;
-  referenceGap: number;
-  referenceGapAbs: number;
-  calibrationNoise: number;
-  separationRatio: number | null;
-  calibrationQuality: ConfidenceLevel | 'unusable';
+  baselineLogTbr: number;
+  baselineMad: number;
+  baselineScale: number;
+  effectiveBaselineScale: number;
   measurementConfidence: ConfidenceLevel;
   signalQuality: 'good' | 'fair' | 'poor' | 'unavailable';
-  relativePosition: number | null;
-  deltaFromFocus: number | null;
-  deltaFromMindWandering: number | null;
-  nearestReference: 'focus' | 'mind-wandering' | 'equidistant' | 'unavailable';
-  coverage: ReferenceCoverage;
-  relativePositionPrevious: number | null;
-  relativePositionSlope: number | null;
+  deltaFromBaseline: number | null;
+  tbrRatioToBaseline: number | null;
+  tbrPercentChange: number | null;
+  robustDeltaFromBaseline: number | null;
+  baselineRelation:
+    | 'baseline-consistent'
+    | 'tbr-elevated'
+    | 'tbr-reduced'
+    | 'uncertain';
+  robustDeltaPrevious: number | null;
+  robustDeltaSlope: number | null;
   trajectory: StateTrajectory;
-  stateEstimationVersion: 'reference_unbounded_v2';
-  /** Visualization only; not a probability and not used for reasoning. */
-  focusPosition: number | null;
-  /** Visualization only; not a probability and not used for reasoning. */
-  mindWanderingPosition: number | null;
-  unboundedMindWanderingPosition: number | null;
-  label: AttentionLabel;
-  trend: AttentionTrend;
-  trendDeltaPerCheckpoint: number | null;
+  stateEstimationVersion: 'guided_baseline_delta_v1';
+  trend: 'increasing' | 'decreasing' | 'stable' | 'insufficient-history';
   variabilityMad: number | null;
-  sustainedMindWanderingWindows: number;
+  sustainedElevatedWindows: number;
+  sustainedReducedWindows: number;
   confidence: number;
   validEpochCount: number;
 }
@@ -124,16 +119,7 @@ export interface RecentlyUsedAsset {
 }
 
 export function reasoningAttentionState(state: AttentionState) {
-  const {
-    focusPosition: _displayFocus,
-    mindWanderingPosition: _displayMindWandering,
-    unboundedMindWanderingPosition: _legacyMindWandering,
-    ...reasoningState
-  } = state;
-  void _displayFocus;
-  void _displayMindWandering;
-  void _legacyMindWandering;
-  return reasoningState;
+  return structuredClone(state);
 }
 
 export type AdaptationGoal =
@@ -148,6 +134,7 @@ export type AdaptationScope = 'maintain' | 'within-scene' | 'scene-transition';
 
 export interface DecisionContext {
   state: AttentionState;
+  profile: CalibrationProfile;
   recentStates: AttentionState[];
   currentPlan: SceneJourneyPlan;
   history: AdaptationHistoryItem[];
@@ -183,7 +170,7 @@ export interface AdaptationDecision {
   intent: AdaptationIntent;
   salience: AdaptationSalience;
   evidenceSummary: {
-    position: AttentionLabel | 'unavailable';
+    relation: AttentionState['baselineRelation'];
     trajectory: StateTrajectory;
     confidence: ConfidenceLevel;
   };

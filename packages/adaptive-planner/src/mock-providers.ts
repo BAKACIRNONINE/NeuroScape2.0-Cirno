@@ -80,15 +80,15 @@ export const phase1SoundKnowledge: readonly SoundAssetKnowledge[] =
 export class MockDecisionProvider implements DecisionProvider {
   async decide(context: DecisionContext): Promise<AdaptationDecision> {
     const state = context.state;
-    const mindWandering =
-      state.relativePosition === null ? null : 1 - state.relativePosition;
     const evidenceSummary = {
-      position:
-        state.label === 'uncertain' ? ('unavailable' as const) : state.label,
+      relation: state.baselineRelation,
       trajectory: state.trajectory,
       confidence: state.measurementConfidence,
     };
-    if (context.stasisPressure && state.label === 'focus-leaning') {
+    if (
+      context.stasisPressure &&
+      state.baselineRelation !== 'tbr-elevated'
+    ) {
       return {
         decision: 'adapt',
         intent: 'support_sustained_focus',
@@ -110,9 +110,8 @@ export class MockDecisionProvider implements DecisionProvider {
       };
     }
     if (
-      mindWandering !== null &&
-      mindWandering >= 0.84 &&
-      state.sustainedMindWanderingWindows >= 3 &&
+      state.baselineRelation === 'tbr-elevated' &&
+      state.sustainedElevatedWindows >= 3 &&
       context.restrictions.allowSceneTransition
     ) {
       return {
@@ -127,14 +126,13 @@ export class MockDecisionProvider implements DecisionProvider {
         goal: 'refresh-engagement',
         scope: 'scene-transition',
         rationale:
-          'Sustained high calibration-relative mind-wandering followed lighter interventions; a low-frequency scene transition is allowed.',
+          'Sustained high-confidence TBR elevation followed lighter interventions; a low-frequency scene transition is allowed without claiming objective mind wandering.',
         provider: 'mock-decision-v2',
       };
     }
     if (
-      mindWandering !== null &&
-      mindWandering >= 0.7 &&
-      state.sustainedMindWanderingWindows >= 2 &&
+      state.baselineRelation === 'tbr-elevated' &&
+      state.sustainedElevatedWindows >= 2 &&
       context.restrictions.allowBodyAnchor
     ) {
       return {
@@ -152,14 +150,13 @@ export class MockDecisionProvider implements DecisionProvider {
         goal: 'support-grounding',
         scope: 'within-scene',
         rationale:
-          'Mind-wandering is sustained across windows; use a body-relative anchor while keeping the semantic scene stable.',
+          'TBR elevation is sustained across high-quality windows; use a conservative body-relative anchor while keeping the semantic scene stable.',
         provider: 'mock-decision-v2',
       };
     }
     if (
-      mindWandering !== null &&
-      mindWandering >= 0.52 &&
-      state.trend === 'toward-mind-wandering' &&
+      state.baselineRelation === 'tbr-elevated' &&
+      state.trend === 'increasing' &&
       context.restrictions.allowEvent
     ) {
       return {
@@ -168,7 +165,7 @@ export class MockDecisionProvider implements DecisionProvider {
         salience: 'low',
         evidenceSummary,
         reason:
-          'Reliable unbounded trajectory is declining toward the mind-wandering reference direction.',
+          'Reliable TBR deviation is increasing relative to the guided baseline.',
         maintainReason: null,
         constraintsForDecision2: [
           'preserve_scene_continuity',
@@ -178,7 +175,7 @@ export class MockDecisionProvider implements DecisionProvider {
         goal: 'gently-reorient',
         scope: 'within-scene',
         rationale:
-          'Attention is moving toward the personal mind-wandering reference; use one sparse directional event.',
+          'Sustained elevated TBR may support gentle reorientation; use one sparse directional event without making a definitive mental-state claim.',
         provider: 'mock-decision-v2',
       };
     }

@@ -186,6 +186,40 @@ describe('study recorder server', () => {
     expect(response.responseId).toBe('resp_raw');
   });
 
+  it('retries one transport failure without retrying an HTTP response', async () => {
+    let calls = 0;
+    const requester = createOpenAIRequester({
+      apiKey: 'test-key',
+      networkRetryDelayMs: 0,
+      fetchImpl: async () => {
+        calls += 1;
+        if (calls === 1) throw new TypeError('fetch failed');
+        return new Response(
+          JSON.stringify({
+            id: 'resp_retry',
+            model: 'gpt-5.6-test',
+            output_text: '{"ok":true}',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      },
+    });
+
+    const response = await requester({
+      stage: 'decision-1',
+      prompt: 'test',
+      promptVersion: 'v1',
+      outputSchema: {
+        name: 'test_schema',
+        strict: true,
+        schema: { type: 'object', additionalProperties: false },
+      },
+    });
+
+    expect(response.output).toEqual({ ok: true });
+    expect(calls).toBe(2);
+  });
+
   it('reports the Responses API incomplete reason when no text is returned', async () => {
     const requester = createOpenAIRequester({
       apiKey: 'test-key',

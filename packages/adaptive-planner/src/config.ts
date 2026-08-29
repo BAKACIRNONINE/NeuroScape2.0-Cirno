@@ -7,9 +7,9 @@ export interface AdaptivePlannerConfig {
   minimumValidEpochs: number;
   trendWindowCount: number;
   trendObservationSpanMs: number;
-  focusLeaningThreshold: number;
-  mindWanderingLeaningThreshold: number;
-  trendDeltaThreshold: number;
+  minimumBaselineScaleLogTbr: number;
+  baselineRelationThreshold: number;
+  robustDeltaTrendThreshold: number;
   highVariabilityMad: number;
   sustainedWindowCount: number;
   minimumConfidence: number;
@@ -19,9 +19,6 @@ export interface AdaptivePlannerConfig {
   exactAssetCooldownMs: number;
   assetFamilyCooldownMs: number;
   bodyAnchorCooldownMs: number;
-  referenceTolerance: number;
-  separationRatioMedium: number;
-  separationRatioHigh: number;
   maxMeaningfulStasisMs: number;
   patchHorizonMs: number;
   executionFreezeBufferMs: number;
@@ -49,27 +46,23 @@ export const phase1Config: AdaptivePlannerConfig = Object.freeze({
   openingDurationMs: 60_000,
   epochDurationMs: 10_000,
   analysisWindowMs: 60_000,
-  checkpointIntervalMs: 20_000,
+  checkpointIntervalMs: 40_000,
   minimumValidEpochs: 5,
   trendWindowCount: 3,
   // Preserve the Phase-1 EEG trend horizon independently of planner cadence.
   trendObservationSpanMs: 80_000,
-  focusLeaningThreshold: 0.34,
-  mindWanderingLeaningThreshold: 0.67,
-  trendDeltaThreshold: 0.05,
+  minimumBaselineScaleLogTbr: 0.05,
+  baselineRelationThreshold: 1,
+  robustDeltaTrendThreshold: 0.25,
   highVariabilityMad: 0.12,
   sustainedWindowCount: 2,
   minimumConfidence: 0.6,
-  adaptationCooldownMs: 10_000,
-  sceneTransitionCooldownMs: 180_000,
+  adaptationCooldownMs: 80_000,
+  sceneTransitionCooldownMs: 200_000,
   maxSceneTransitions: 5,
   exactAssetCooldownMs: 90_000,
   assetFamilyCooldownMs: 45_000,
   bodyAnchorCooldownMs: 80_000,
-  // TBD_PILOT: descriptive reference and confidence thresholds.
-  referenceTolerance: 0.05,
-  separationRatioMedium: 1,
-  separationRatioHigh: 2.5,
   maxMeaningfulStasisMs: 80_000,
   // TBD_PILOT: receding-horizon, latency, and restrained-complexity policy.
   patchHorizonMs: 120_000,

@@ -12,7 +12,7 @@ import type {
 } from './types.js';
 import { reasoningAttentionState } from './types.js';
 
-export const DECISION_1_PROMPT_VERSION = 'decision-1-reference-unbounded-v5';
+export const DECISION_1_PROMPT_VERSION = 'decision-1-guided-baseline-delta-v1';
 
 const scopes: readonly AdaptationScope[] = [
   'maintain',
@@ -36,11 +36,11 @@ interface Decision1WireOutput {
   salience: (typeof saliences)[number];
   scope: AdaptationScope;
   evidence_summary: {
-    position:
-      | 'focus-leaning'
-      | 'intermediate'
-      | 'mind-wandering-leaning'
-      | 'unavailable';
+    relation:
+      | 'baseline-consistent'
+      | 'tbr-elevated'
+      | 'tbr-reduced'
+      | 'uncertain';
     trajectory:
       'improving' | 'stable' | 'declining' | 'volatile' | 'unavailable';
     confidence: 'high' | 'medium' | 'low';
@@ -74,15 +74,15 @@ export const decision1OutputSchema: Record<string, unknown> = Object.freeze({
       evidence_summary: {
         type: 'object',
         additionalProperties: false,
-        required: ['position', 'trajectory', 'confidence'],
+        required: ['relation', 'trajectory', 'confidence'],
         properties: {
-          position: {
+          relation: {
             type: 'string',
             enum: [
-              'focus-leaning',
-              'intermediate',
-              'mind-wandering-leaning',
-              'unavailable',
+              'baseline-consistent',
+              'tbr-elevated',
+              'tbr-reduced',
+              'uncertain',
             ],
           },
           trajectory: {
@@ -110,24 +110,20 @@ export function buildDecision1Prompt(context: DecisionContext): string {
     'You are NeuroScape Decision 1: Should Adapt?',
     'Decide whether the current soundscape should be adapted at this eligible checkpoint.',
     'The deterministic eligibility gate has already approved an LLM assessment. Eligibility does not itself mean an adaptation is necessary.',
-    'The two calibration values are empirical reference anchors, not lower and upper bounds.',
-    'relativePosition is unbounded and is not a percentage or probability. Values below 0 or above 1 are valid directional positions.',
-    'A large magnitude can result from weak calibration separation, so always interpret it together with calibration quality, raw distance, signal quality, and temporal trend.',
+    'The baseline is an empirical guided-breathing reference, not maximum focus, a physiological bound, or a diagnostic threshold.',
+    'Positive delta means TBR is higher than baseline; it does not objectively detect mind wandering.',
+    'Negative delta means TBR is lower than baseline; it does not mean the participant is more than 100% focused.',
     'Do not infer a definitive mental state from a single checkpoint.',
-    'Sustained focus does not automatically require maintain; low-salience supportive adaptation is allowed.',
-    'Never invent mind wandering merely to justify a soundscape change.',
-    'Use relative position, raw log-TBR deltas, trajectory, variability, measurement confidence, signal quality, scene history, stasis, and restrictions.',
-    'For focus-leaning attention that is stable or improving, consider maintain, preserve_recovery, or a minimal support_sustained_focus evolution.',
-    'For intermediate attention that is stable, a low-cost within-scene gently-reorient event may be appropriate when no recent intervention is awaiting effect.',
-    'For intermediate attention trending toward mind-wandering, normally adapt with a gently-reorient within-scene intervention unless a restriction or recent intervention specifically argues against it.',
-    'For high-confidence mind-wandering-leaning attention, normally adapt. Prefer gently-reorient for a new or brief deviation and support-grounding when the deviation is sustained across checkpoints.',
+    'Never invent attention decline or mind wandering merely to justify a soundscape change or meet an adaptation count.',
+    'Interpret raw delta, TBR ratio, robust deviation, signal quality, confidence, trajectory, duration, scene history, and prior outcomes together.',
+    'Sustained, high-confidence TBR elevation may support a conservative gentle-reorientation hypothesis, but never a definitive mental-state claim.',
     'Escalate to refresh-engagement or a scene transition only after lighter interventions have not produced a durable improvement.',
     'Prefer maintain only when evidence is transient, already improving, low-confidence, or a recent intervention has not had enough time to take effect; do not maintain merely because the state is intermediate.',
-    'Use within-scene adaptation before scene transition. Scene transition is a rare, high-salience intervention for sustained, severe mind-wandering after lighter interventions were insufficient, and only when restrictions allow it.',
+    'Use within-scene adaptation before scene transition. Scene transition is rare and only follows sustained high-quality evidence plus insufficient lighter interventions.',
     'Opening and closing phase restrictions are authoritative. Never request a forbidden event, body anchor, or scene transition.',
-    'When stasisPressure is true, do not maintain indefinitely merely because evidence is focus-leaning; prefer minimal support_sustained_focus or refresh_engagement unless continuity constraints justify maintain.',
+    'When stasisPressure is true, a minimal non-corrective evolution may be considered, but do not invent an EEG claim.',
     'Low-confidence or unusable EEG cannot support a corrective claim. It may only support conservative history-driven evolution or maintain.',
-    'When calibrationQuality is low or unusable, prioritize the system-observable soundscape hierarchy and asset quality over EEG-directed correction: preserve one stable primary ambient foundation, avoid competing ambient layers, keep action/event cues sparse and subordinate, and request only minimal quality-improving or continuity-preserving evolution.',
+    'When baseline or measurement quality is insufficient, prioritize soundscape continuity and maintain rather than EEG-directed correction.',
     'Under that low-calibration fallback, do not adapt merely to create activity. Prefer maintain when the current layer hierarchy is coherent; adapt conservatively only when stasis pressure, a missing sound role, excessive density, repetition, or a clearly better-quality compatible layer justifies it.',
     'adaptationProgress is a soft session-level target, never permission to violate safety or invent an EEG claim. When behindPace is true and a safe minimal system-sound evolution exists, prefer that evolution over repeated maintain; when no safe useful change exists, maintain remains valid.',
     'If decision=maintain, intent must be maintain or preserve_recovery, scope must be maintain, and maintain_reason must be concrete.',
@@ -136,10 +132,20 @@ export function buildDecision1Prompt(context: DecisionContext): string {
     'Use supplied prior outcomes only as non-causal, provisional observations. If the last applied patch is not yet observable, avoid stacking another intervention unless clearly necessary.',
     'Provide a concise, inspectable rationale based only on supplied observations. Do not claim objective mind-wandering detection and do not expose hidden chain-of-thought.',
     `INPUT_JSON=${JSON.stringify({
-      eegState: reasoningAttentionState(context.state),
+      baselineReference: {
+        baselineLogTbr: context.profile.baselineLogTbr,
+        baselineMad: context.profile.baselineMad,
+        effectiveBaselineScale: context.profile.effectiveBaselineScale,
+        validEpochs: context.profile.validEpochCount,
+        qualityStatus: context.profile.qualityStatus,
+        selfReportedFocus: context.profile.selfReportedFocus,
+        selfReportedDrowsiness: context.profile.selfReportedDrowsiness,
+      },
+      currentWindow: reasoningAttentionState(context.state),
       recentTrajectorySummary: context.recentStates.slice(-3).map((state) => ({
         timestampMs: state.timestampMs,
-        relativePosition: state.relativePosition,
+        robustDeltaFromBaseline: state.robustDeltaFromBaseline,
+        baselineRelation: state.baselineRelation,
         trajectory: state.trajectory,
         measurementConfidence: state.measurementConfidence,
         signalQuality: state.signalQuality,
@@ -268,10 +274,7 @@ export class OpenAIDecisionProvider implements DecisionProvider {
         intent: 'maintain',
         salience: 'minimal',
         evidenceSummary: {
-          position:
-            context.state.label === 'uncertain'
-              ? 'unavailable'
-              : context.state.label,
+          relation: context.state.baselineRelation,
           trajectory: context.state.trajectory,
           confidence: context.state.measurementConfidence,
         },

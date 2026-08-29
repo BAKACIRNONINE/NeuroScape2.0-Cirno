@@ -37,7 +37,7 @@ const startPayload = (quality_override: boolean): RequestInit => ({
 });
 
 export interface SelfReportPayload {
-  mind_wandering: number | null;
+  focus: number | null;
   drowsiness: number | null;
   investigator_notes: string;
   unable_to_judge: boolean;
@@ -68,10 +68,15 @@ export const api = {
       '/calibration/acclimation/repeat',
       startPayload(qualityOverride),
     ),
-  startBlock: (qualityOverride: boolean) =>
-    request('/calibration/block/start', startPayload(qualityOverride)),
-  endBlockEarly: () =>
-    request('/calibration/block/end-early', { method: 'POST' }),
+  startBaseline: (qualityOverride: boolean) =>
+    request('/calibration/baseline/start', startPayload(qualityOverride)),
+  endBaselineEarly: () =>
+    request('/calibration/baseline/end-early', { method: 'POST' }),
+  guidanceEvent: (event: string, timing_offset_ms?: number) =>
+    request('/calibration/guidance/event', {
+      method: 'POST',
+      body: JSON.stringify({ event, timing_offset_ms }),
+    }),
   submitSelfReport: (payload: SelfReportPayload) =>
     request('/calibration/self-report', {
       method: 'POST',

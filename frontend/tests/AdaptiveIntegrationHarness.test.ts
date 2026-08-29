@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { AdaptiveIntegrationHarness } from '../src/integration/AdaptiveIntegrationHarness.js';
+import {
+  AdaptiveIntegrationHarness,
+  attentionStateForEpoch,
+} from '../src/integration/AdaptiveIntegrationHarness.js';
 import {
   createMockTbrReplay,
   mockCalibrationProfile,
+  type AttentionState,
 } from '@neuroscape/adaptive-planner';
 import { recordingStore } from '../src/recording/recordingStore.js';
 import { runtimeStore } from '../src/runtime/RuntimeStore.js';
@@ -10,6 +14,20 @@ import { runtimeStore } from '../src/runtime/RuntimeStore.js';
 describe('Phase 1 adaptive end-to-end harness', () => {
   afterEach(() => {
     if (recordingStore.stop()) runtimeStore.getState().resetSessionStreams();
+  });
+
+  it('keeps a delayed failed checkpoint paired with its own NeuroState timestamp', () => {
+    const older = {
+      timestampMs: 60_000,
+    } as AttentionState;
+    const newer = {
+      timestampMs: 80_000,
+    } as AttentionState;
+
+    expect(attentionStateForEpoch(null, [older, newer], 60_000)).toBe(older);
+    expect(
+      attentionStateForEpoch(null, [older, newer], 70_000),
+    ).toBeUndefined();
   });
 
   it('replays mock EEG through Decisions 1/2, Module 03, recording, and the actual session end', async () => {
@@ -41,6 +59,9 @@ describe('Phase 1 adaptive end-to-end harness', () => {
     expect(
       recording?.adaptiveTrace.some((entry) => entry.kind === 'decision-2'),
     ).toBe(true);
+    expect(recording?.decisionEvents?.some((event) => event.type === 'decision-1')).toBe(true);
+    expect(recording?.decisionEvents?.some((event) => event.type === 'decision-2')).toBe(true);
+    expect(recording?.eegMetrics).toHaveLength(60);
     expect(
       recording?.adaptiveTrace.some((entry) => entry.kind === 'plan-applied'),
     ).toBe(true);
@@ -120,7 +141,8 @@ describe('Phase 1 adaptive end-to-end harness', () => {
     expect(recording?.sceneJourneyPlans[0]?.value.planningHorizonSec).toBe(600);
     expect(
       recording?.sceneJourneyPlans[0]?.value.soundscape.event.length,
-    ).toBeGreaterThan(0);
+    ).toBe(0);
+    expect(recording?.eegMetrics?.length).toBeGreaterThan(0);
     expect(
       recording?.adaptiveTrace.some(
         (entry) => entry.kind === 'decision-1' || entry.kind === 'decision-2',

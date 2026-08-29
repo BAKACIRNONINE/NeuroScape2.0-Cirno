@@ -12,12 +12,12 @@ from app.signal_processing.core import (
     EpochResult,
     IncompatibleCalibrationProfile,
     analyze_segment,
-    anchor_summary,
+    baseline_summary,
     band_power,
     channel_log_tbr,
     condition_median,
     create_epochs,
-    pooled_mad,
+    baseline_mad,
     preprocess,
     validate_calibration_profile,
 )
@@ -96,6 +96,8 @@ def test_af7_af8_epoch_median(make_samples):
     result = analyze_segment(samples)[0]
     assert len(result.valid_channels) == 2
     assert result.tbr == pytest.approx(float(np.median(list(result.channel_tbr.values()))))
+    assert result.theta_power is not None
+    assert result.beta_power is not None
 
 
 def test_single_valid_channel_fallback(make_samples):
@@ -112,14 +114,12 @@ def test_condition_median_uses_only_valid_epochs():
     assert condition_median(results) == pytest.approx(2.0)
 
 
-def test_anchor_summary_uses_medians_and_pooled_mad():
-    summary = anchor_summary([1.0, 2.0, 100.0], [7.0, 8.0, 9.0])
-    assert summary["focused_meditation_anchor"] == pytest.approx(2.0)
-    assert summary["free_thought_anchor"] == pytest.approx(8.0)
-    assert summary["difference"] == pytest.approx(6.0)
-    assert summary["pooled_mad"] == pytest.approx(pooled_mad([1, 2, 100, 7, 8, 9]))
-    assert summary["direction"] == "free_thought_higher"
-    assert summary["separation_assessment"]["status"] == "pilot_threshold_not_configured"
+def test_baseline_summary_uses_median_mad_and_robust_scale():
+    values = [1.0, 2.0, 100.0]
+    summary = baseline_summary(values)
+    assert summary["baseline_log_tbr"] == pytest.approx(2.0)
+    assert summary["baseline_mad"] == pytest.approx(baseline_mad(values))
+    assert summary["baseline_scale"] == pytest.approx(1.4826)
 
 
 def test_epoch_quality_record_contains_soft_flags(make_samples):
@@ -135,7 +135,7 @@ def test_quality_rejects_headband_and_bad_hsi(make_samples):
 
 
 def test_self_report_cannot_enter_signal_processing_formula():
-    parameters = inspect.signature(anchor_summary).parameters
+    parameters = inspect.signature(baseline_summary).parameters
     assert "self_report" not in parameters
 
 

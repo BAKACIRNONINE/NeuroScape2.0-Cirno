@@ -4,7 +4,7 @@ import { audioEngine } from '../../audio/AudioEngine.js';
 import { MEDITATION_OPENING_URL } from '../../audio/opening.js';
 import { runtimeStore } from '../../runtime/RuntimeStore.js';
 
-const AUDIO_URL = '/audio/control/non-adaptive-10min.mp3';
+const AUDIO_URL = '/audio/forest/ambient/forest_ambient_bed_01.mp3';
 const clock = (milliseconds: number) => {
   const seconds = Math.floor(milliseconds / 1000);
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
@@ -98,8 +98,8 @@ export function FixedAudioSessionPage({ onHome }: { onHome: () => void }) {
         <span className="panel-kicker">10 MIN NON-ADAPTIVE CONTROL</span>
         <h1>Fixed Meditation</h1>
         <p>
-          Every participant hears the same pre-rendered control audio. Muse EEG
-          is recorded for later analysis but does not change the soundscape.
+          Every participant hears the same opening voice and continuous forest
+          ambience. Muse EEG is analyzed and recorded but never changes playback.
         </p>
         <strong className="fixed-audio-clock">
           {clock(session.elapsedTimeMs)} / 10:00
@@ -107,6 +107,7 @@ export function FixedAudioSessionPage({ onHome }: { onHome: () => void }) {
         <audio
           ref={audioRef}
           src={AUDIO_URL}
+          loop
           preload="auto"
           onTimeUpdate={updateTime}
           onPlay={() =>

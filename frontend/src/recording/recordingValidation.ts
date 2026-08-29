@@ -1,5 +1,6 @@
 import {
   NEUROSCAPE_PROTOCOL_VERSION,
+  LEGACY_RECORDED_SESSION_SCHEMA_VERSION,
   RECORDED_SESSION_SCHEMA_VERSION,
   type RecordedSession,
 } from '@neuroscape/contracts';
@@ -33,7 +34,10 @@ export function validateRecordedSession(value: unknown): RecordingValidation {
   const errors: string[] = [];
   if (!record(value) || !record(value.metadata))
     return { valid: false, errors: ['Recording and metadata must be objects'] };
-  if (value.metadata.schemaVersion !== RECORDED_SESSION_SCHEMA_VERSION)
+  if (
+    value.metadata.schemaVersion !== RECORDED_SESSION_SCHEMA_VERSION &&
+    value.metadata.schemaVersion !== LEGACY_RECORDED_SESSION_SCHEMA_VERSION
+  )
     errors.push('Unsupported recording schema version');
   if (value.metadata.protocolVersion !== NEUROSCAPE_PROTOCOL_VERSION)
     errors.push('Unsupported protocol version');
@@ -109,6 +113,8 @@ export function validateRecordedSession(value: unknown): RecordingValidation {
     errors.push('Invalid or unordered plannerEvents');
   if (
     !Array.isArray(value.adaptiveTrace) ||
+    (value.eegMetrics !== undefined && !Array.isArray(value.eegMetrics)) ||
+    (value.decisionEvents !== undefined && !Array.isArray(value.decisionEvents)) ||
     (value.audioPlaybackEvidence !== undefined &&
       !Array.isArray(value.audioPlaybackEvidence)) ||
     (value.audioExecutionDiagnostics !== undefined &&

@@ -43,13 +43,13 @@ describe('migrated NeuroScape UI', () => {
     expect(sounds).toContain('ambient.water');
     expect(sounds).toContain('event.bird');
   });
-  it('displays canonical Arousal and backend planner reasoning', () => {
+  it('displays baseline-relative evidence and backend planner reasoning', () => {
     populate();
     const neuro = renderToStaticMarkup(<NeuroStatePanel />);
     const ai = renderToStaticMarkup(<AIAdaptationPanel />);
-    expect(neuro).toContain('Arousal');
+    expect(neuro).toContain('Baseline-Relative Neuro State');
+    expect(neuro).toContain('TBR delta from baseline');
     expect(neuro).not.toContain('Relaxation');
-    expect(neuro).toContain('41%');
     expect(ai).toContain('Move gradually toward running water.');
   });
   it('keeps completed Decision 2 executions visible', () => {
@@ -102,9 +102,10 @@ describe('migrated NeuroScape UI', () => {
     const session = renderToStaticMarkup(
       <FixedAudioSessionPage onHome={() => undefined} />,
     );
-    expect(session).toContain('same pre-rendered control audio');
+    expect(session).toContain('same opening voice and continuous forest');
     expect(session).toContain('Muse EEG');
-    expect(session).toContain('does not change the soundscape');
+    expect(session).toContain('never changes playback');
+    expect(session).toContain('/audio/forest/ambient/forest_ambient_bed_01.mp3');
     expect(session).toContain(
       '/audio/common/opening/meditation_opening.mp3',
     );

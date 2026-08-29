@@ -126,9 +126,31 @@ export function validateNeuroState(value: unknown): value is NeuroState {
     candidate.value <= 1 &&
     ['increasing', 'decreasing', 'stable'].includes(String(candidate.trend));
   const attention = value.attention;
+  const baselineAttention =
+    isRecord(attention) &&
+    attention.stateEstimationVersion === 'guided_baseline_delta_v1';
   const validAttention =
     attention === undefined ||
-    (isRecord(attention) &&
+    (baselineAttention
+      ? (attention.currentLogTbr === null || finite(attention.currentLogTbr)) &&
+        finite(attention.baselineLogTbr) &&
+        finite(attention.baselineMad) &&
+        finite(attention.baselineScale) &&
+        finite(attention.effectiveBaselineScale) &&
+        attention.effectiveBaselineScale > 0 &&
+        (attention.deltaFromBaseline === null || finite(attention.deltaFromBaseline)) &&
+        (attention.tbrRatioToBaseline === null || finite(attention.tbrRatioToBaseline)) &&
+        (attention.robustDeltaFromBaseline === null ||
+          finite(attention.robustDeltaFromBaseline)) &&
+        ['baseline-consistent', 'tbr-elevated', 'tbr-reduced', 'uncertain'].includes(
+          String(attention.baselineRelation),
+        ) &&
+        ['increasing', 'decreasing', 'stable', 'insufficient-history'].includes(
+          String(attention.trend),
+        ) &&
+        Number.isInteger(attention.validEpochCount) &&
+        Number(attention.validEpochCount) >= 0
+      : isRecord(attention) &&
       (attention.currentLogTbr === null || finite(attention.currentLogTbr)) &&
       (attention.focusPosition === null ||
         (finite(attention.focusPosition) &&

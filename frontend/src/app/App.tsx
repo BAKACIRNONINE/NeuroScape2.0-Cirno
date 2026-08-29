@@ -32,7 +32,7 @@ import { liveSessionId } from '../network/liveRuntime.js';
 import { CalibrationPage } from '../calibration/CalibrationPage.js';
 import {
   LiveEegEpochSource,
-  LiveRawEegRecorder,
+  ReplayEegEpochSource,
   type RawEegRecordingSource,
   toPlannerCalibrationProfile,
 } from '../calibration/integration.js';
@@ -220,7 +220,7 @@ export function App() {
       startedAtIso: new Date().toISOString(),
       basePlanId: assignment.basePlanId,
       basePlanVersion: BASE_PLAN_VERSION,
-      basePlanProfileId: 'forest_restrained_v1',
+      basePlanProfileId: 'forest_ambient_only_v1',
       assignmentRuleVersion: assignment.assignmentRuleVersion,
       conditionOrder: assignment.conditionOrder,
       basePlanExecutionMode: 'structured-runtime',
@@ -234,7 +234,7 @@ export function App() {
     setPage('session');
     void startAdaptiveAudio();
   };
-  const startCalibratedAdaptive = async (profile: Profile) => {
+  const startCalibratedAdaptive = async (profile: Profile, replayFile?: File) => {
     const assignment = assignSharedBasePlan(profile.participant_id);
     try {
       const response = await fetch('/api/llm/health');
@@ -243,7 +243,9 @@ export function App() {
         throw new Error(
           'OpenAI planner is not configured. Add OPENAI_API_KEY and restart npm run dev.',
         );
-      const epochSource = new LiveEegEpochSource(profile.session_id);
+      const epochSource = replayFile
+        ? new ReplayEegEpochSource(replayFile)
+        : new LiveEegEpochSource(profile.session_id);
       await epochSource.start();
       rawEegSource.current = epochSource;
       const plannerProfile = toPlannerCalibrationProfile(profile);
@@ -258,20 +260,20 @@ export function App() {
         participantId: profile.participant_id,
         runMode: 'study-realtime',
         plannerMode: 'openai',
-        userPrompt: `10-minute adaptive session · live Muse EEG · calibration ${profile.session_id}`,
-        eegMode: 'muse',
+        userPrompt: `10-minute adaptive session · ${replayFile ? '10× raw EEG replay' : 'live Muse EEG'} · calibration ${profile.session_id}`,
+        eegMode: replayFile ? 'recorded' : 'muse',
         startedAtIso: new Date().toISOString(),
         calibrationProfile: plannerProfile,
         basePlanId: assignment.basePlanId,
         basePlanVersion: BASE_PLAN_VERSION,
-        basePlanProfileId: 'forest_restrained_v1',
+        basePlanProfileId: 'forest_ambient_only_v1',
         assignmentRuleVersion: assignment.assignmentRuleVersion,
         conditionOrder: assignment.conditionOrder,
         basePlanExecutionMode: 'structured-runtime',
       });
       adaptiveIntegrationHarness.start({
         sessionId,
-        runMode: 'study-realtime',
+        runMode: replayFile ? 'mock-fast' : 'study-realtime',
         plannerMode: 'openai',
         sessionDurationMs: 10 * 60_000,
         calibrationProfile: plannerProfile,
@@ -311,46 +313,41 @@ export function App() {
     spatialDiagnosticHarness.start();
     setPage('session');
   };
-  const startNonAdaptive = async (participantId: string) => {
+  const startNonAdaptive = async (profile: Profile, replayFile?: File) => {
+    const participantId = profile.participant_id;
     const assignment = assignSharedBasePlan(participantId);
     try {
-      const recorder = new LiveRawEegRecorder();
-      await recorder.start();
-      rawEegSource.current = recorder;
+      const epochSource = replayFile
+        ? new ReplayEegEpochSource(replayFile)
+        : new LiveEegEpochSource(profile.session_id);
+      await epochSource.start();
+      rawEegSource.current = epochSource;
+      const plannerProfile = toPlannerCalibrationProfile(profile);
+      liveRuntimeClient.disconnect();
+      setMode('non-adaptive');
+      setRealTimeRestartEnabled(false);
+      studyArtifactStore.reset();
+      audioCaptureError.current = null;
+      const sessionId = `session-${new Date().toISOString().replaceAll(/\D/g, '')}-${crypto.randomUUID().slice(0, 8)}`;
+      recordingStore.start({
+        sessionId, participantId, runMode: 'non-adaptive', plannerMode: 'fixed',
+        eegMode: replayFile ? 'recorded' : 'muse',
+        userPrompt: `Fixed non-adaptive Base Plan; ${replayFile ? '10× raw EEG replay' : 'Muse EEG'} is analyzed and logged but cannot affect sound`,
+        startedAtIso: new Date().toISOString(), calibrationProfile: plannerProfile,
+        basePlanId: assignment.basePlanId, basePlanVersion: BASE_PLAN_VERSION,
+        basePlanProfileId: 'forest_ambient_only_v1', assignmentRuleVersion: assignment.assignmentRuleVersion,
+        conditionOrder: assignment.conditionOrder, basePlanExecutionMode: 'structured-runtime',
+      });
+      adaptiveIntegrationHarness.start({
+        sessionId, runMode: replayFile ? 'mock-fast' : 'study-realtime', plannerMode: 'mock',
+        participantId, condition: 'non-adaptive', calibrationProfile: plannerProfile,
+        epochSource, sessionDurationMs: 10 * 60_000,
+      });
     } catch (error) {
       rawEegSource.current = null;
       window.alert(error instanceof Error ? error.message : String(error));
       return;
     }
-    liveRuntimeClient.disconnect();
-    setMode('non-adaptive');
-    setRealTimeRestartEnabled(false);
-    studyArtifactStore.reset();
-    audioCaptureError.current = null;
-    const sessionId = `session-${new Date().toISOString().replaceAll(/\D/g, '')}-${crypto.randomUUID().slice(0, 8)}`;
-    recordingStore.start({
-      sessionId,
-      participantId,
-      runMode: 'non-adaptive',
-      plannerMode: 'fixed',
-      eegMode: 'muse',
-      userPrompt:
-        'Approved fixed 10-minute non-adaptive trajectory; Muse EEG is recorded for analysis but is not used for adaptation',
-      startedAtIso: new Date().toISOString(),
-      basePlanId: assignment.basePlanId,
-      basePlanVersion: BASE_PLAN_VERSION,
-      basePlanProfileId: 'forest_restrained_v1',
-      assignmentRuleVersion: assignment.assignmentRuleVersion,
-      conditionOrder: assignment.conditionOrder,
-      basePlanExecutionMode: 'structured-runtime',
-    });
-    adaptiveIntegrationHarness.start({
-      sessionId,
-      runMode: 'study-realtime',
-      plannerMode: 'mock',
-      participantId,
-      condition: 'non-adaptive',
-    });
     setPage('session');
     void startAdaptiveAudio();
   };

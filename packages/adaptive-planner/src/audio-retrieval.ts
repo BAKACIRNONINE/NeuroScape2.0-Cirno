@@ -288,7 +288,7 @@ export function retrieveDecision2Candidates(
   const stateTags = new Set([
     ...desiredTags,
     context.state.phase,
-    context.state.label === 'mind-wandering-leaning'
+    context.state.baselineRelation === 'tbr-elevated'
       ? 'attention_low'
       : 'stability_high',
   ]);
@@ -486,11 +486,12 @@ export function buildDecision2Prompt(
       constraintsForDecision2: decision.constraintsForDecision2,
     },
     executionContext: {
-      calibrationFallback: {
+      baselineFallback: {
         active:
-          context.state.calibrationQuality === 'low' ||
-          context.state.calibrationQuality === 'unusable',
-        calibrationQuality: context.state.calibrationQuality,
+          context.state.measurementConfidence === 'low' ||
+          context.state.baselineRelation === 'uncertain',
+        baselineAvailable:
+          context.state.baselineRelation !== 'uncertain',
         measurementConfidence: context.state.measurementConfidence,
         priority: 'system_sound_hierarchy_and_asset_quality',
       },
@@ -578,7 +579,7 @@ export function buildDecision2Prompt(
     'Use only assetId values in candidates. Never invent an asset, location, motion, duration, gain, or numerical range.',
     'Treat candidate summaries as authoritative. Choose gain within gainRange, using recommended as the default reference; do not exceed max. Do not override authored duration, playback contract, technical limits, or quality attenuation.',
     'Explicitly declare a supported distancePolicy (none or bounded inverse) and playback for every inserted sound. Also declare activationCondition for Actions and interpolation plus trajectoryUpdatePolicy for Events. These fields are authoritative downstream.',
-    'When executionContext.calibrationFallback.active is true, do not optimize against EEG position or trajectory. Optimize the system soundscape itself: preserve a stable primary ambient foundation, allow at most one clearly subordinate supporting ambient role, keep body/action cues intentional, keep events sparse and foregrounded only briefly, and avoid simultaneous competition between layers.',
+    'When executionContext.baselineFallback.active is true, do not optimize against EEG position or trajectory. Optimize the system soundscape itself: preserve a stable primary ambient foundation, allow at most one clearly subordinate supporting ambient role, keep body/action cues intentional, keep events sparse and foregrounded only briefly, and avoid simultaneous competition between layers.',
     'In calibration fallback mode, rank compatible candidates by authored quality and system suitability: prefer qualityTier=preferred, then standard, and use limited_use only when no safer compatible candidate fills the required role. Use priority, selectionWeight, qualityAttenuation, recommendedVolume, suddenness, and intensity together; never replace a coherent layer with a lower-quality asset merely to create change.',
     'For an event, durationMs MUST equal defaultMotion.durationSec * 1000 when defaultMotion.durationSec is non-null; otherwise it MUST equal autoDeleteAfterSec * 1000. autoDeleteAfterSec is only the fallback lifecycle when no authored motion duration exists. A looping asset may remain active until a later patch removes it.',
     'Prefer an unused compatible variant and respect the already-applied exact-asset and family cooldown filtering.',

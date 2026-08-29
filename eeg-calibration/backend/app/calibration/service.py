@@ -17,18 +17,14 @@ from app.osc.receiver import MuseOSCReceiver, local_ipv4
 from app.signal_processing.core import (
     FEATURE_VERSION,
     analyze_segment,
-    anchor_summary,
+    baseline_summary,
     preprocess,
     validate_calibration_profile,
 )
 from app.storage.session_store import SessionStore
 
-FOCUSED = "focused_meditation"
-FREE_THOUGHT = "free_thought"
-CONDITION_LABELS = {
-    FOCUSED: "Focused Meditation",
-    FREE_THOUGHT: "Free Thought",
-}
+GUIDED_BASELINE = "guided_breathing_baseline"
+GUIDED_BASELINE_LABEL = "Guided Breathing Baseline"
 
 
 class CalibrationService:
@@ -48,7 +44,6 @@ class CalibrationService:
         self.result: dict[str, Any] | None = None
         self.quality: dict[str, Any] | None = None
         self.processing_stage: str | None = None
-        self.calibration_order: str | None = None
         self.original_schedule: list[dict[str, Any]] = []
         self.pending_tasks: list[dict[str, Any]] = []
         self.blocks: list[dict[str, Any]] = []
@@ -90,34 +85,17 @@ class CalibrationService:
             self.store.writer.put_eeg(sample)
 
     @staticmethod
-    def _order_for(participant_id: str) -> str:
-        return "A" if int(participant_id[1:]) % 2 else "B"
-
-    @staticmethod
-    def _schedule_for(order: str) -> list[dict[str, Any]]:
-        conditions = (
-            [FOCUSED, FREE_THOUGHT, FOCUSED, FREE_THOUGHT]
-            if order == "A"
-            else [FREE_THOUGHT, FOCUSED, FREE_THOUGHT, FOCUSED]
-        )
-        counts = {FOCUSED: 0, FREE_THOUGHT: 0}
-        tasks = []
-        for sequence_number, condition in enumerate(conditions, start=1):
-            counts[condition] += 1
-            condition_number = counts[condition]
-            tasks.append(
-                {
-                    "task_id": f"{condition}_{condition_number}",
-                    "sequence_number": sequence_number,
-                    "condition": condition,
-                    "condition_label": CONDITION_LABELS[condition],
-                    "condition_block_number": condition_number,
-                    "is_redo": False,
-                    "redo_of_block_id": None,
-                    "redo_reason": None,
-                }
-            )
-        return tasks
+    def _baseline_task(*, redo: bool = False, redo_reason: list[str] | None = None) -> dict[str, Any]:
+        return {
+            "task_id": "guided_breathing_baseline_redo" if redo else GUIDED_BASELINE,
+            "sequence_number": 2 if redo else 1,
+            "condition": GUIDED_BASELINE,
+            "condition_label": GUIDED_BASELINE_LABEL,
+            "condition_block_number": 2 if redo else 1,
+            "is_redo": redo,
+            "redo_of_block_id": "baseline_1" if redo else None,
+            "redo_reason": redo_reason,
+        }
 
     def create_session(self, participant_id: str) -> dict:
         if self.machine.state != CalibrationState.IDLE:
@@ -125,26 +103,22 @@ class CalibrationService:
         self._cancel_timer()
         started = time.monotonic()
         self.receiver.set_session_start(started)
-        order = self._order_for(participant_id)
         self.metadata = self.store.create(participant_id, local_ipv4())
         self.metadata.update(
             {
                 "session_monotonic_start": started,
-                "calibration_order": order,
                 "protocol_version": FEATURE_VERSION,
             }
         )
         self.store.update_metadata(
             session_monotonic_start=started,
-            calibration_order=order,
             protocol_version=FEATURE_VERSION,
         )
         self.markers = []
         self.result = None
         self.quality = None
         self.processing_stage = None
-        self.calibration_order = order
-        self.original_schedule = self._schedule_for(order)
+        self.original_schedule = [self._baseline_task()]
         self.pending_tasks = copy.deepcopy(self.original_schedule)
         self.blocks = []
         self.acclimation_attempts = []
@@ -337,11 +311,11 @@ class CalibrationService:
             poor = self._validate_recording_signal(quality_override)
             self._record_quality_override(quality_override, poor)
             task = self.pending_tasks.pop(0)
-            block_id = f"block_{len(self.blocks) + 1}_{task['task_id']}"
+            block_id = f"baseline_{len(self.blocks) + 1}"
             self.machine.transition(CalibrationState.BLOCK_RECORDING)
             blink_event_start_count = int(self.receiver.status().get("blink_events_session", 0))
             marker = self._marker(
-                "BLOCK_START",
+                "BASELINE_START",
                 condition=task["condition"],
                 block_number=task["condition_block_number"],
                 block_id=block_id,
@@ -357,12 +331,10 @@ class CalibrationService:
                 "duration_seconds": None,
                 "completed_automatically": None,
                 "self_report": None,
-                "subjective_validity": None,
-                "subjective_ideal_distance": None,
                 "eeg_quality": None,
-                "included_in_anchor": False,
+                "included_in_baseline": False,
             }
-            self._active_timer = self._schedule(config.BLOCK_SECONDS, self._finish_block)
+            self._active_timer = self._schedule(config.BASELINE_SECONDS, self._finish_block)
             self._persist_protocol()
             return marker
 
@@ -375,7 +347,7 @@ class CalibrationService:
             self._active_timer = None
             block = self.current_block
             marker = self._marker(
-                "BLOCK_END",
+                "BASELINE_END",
                 condition=block["condition"],
                 block_number=block["condition_block_number"],
                 block_id=block["block_id"],
@@ -401,51 +373,14 @@ class CalibrationService:
             raise InvalidTransition("No calibration block is recording")
         return marker
 
-    @staticmethod
-    def _subjective_validity(condition: str, report: SelfReportSubmit) -> dict[str, Any]:
-        reasons: list[str] = []
-        if report.unable_to_judge:
-            return {"status": "invalid", "reasons": ["unable_to_judge"]}
-        if report.drowsiness >= 5:
-            return {"status": "invalid", "reasons": ["drowsiness_at_least_5"]}
-        if report.drowsiness == 4:
-            reasons.append("drowsiness_borderline")
-        if report.mind_wandering == 4:
-            reasons.append("mind_wandering_borderline")
-        if reasons:
-            return {"status": "borderline", "reasons": reasons}
-        manipulation_pass = (
-            report.mind_wandering <= 3
-            if condition == FOCUSED
-            else report.mind_wandering >= 5
-        )
-        if manipulation_pass and report.drowsiness <= 3:
-            return {"status": "pass", "reasons": []}
-        return {"status": "invalid", "reasons": ["condition_manipulation_failed"]}
-
-    @staticmethod
-    def _subjective_ideal_distance(
-        condition: str, report: SelfReportSubmit
-    ) -> int | None:
-        if (
-            report.unable_to_judge
-            or report.mind_wandering is None
-            or report.drowsiness is None
-        ):
-            return None
-        ideal_mind_wandering = 1 if condition == FOCUSED else 7
-        return abs(report.mind_wandering - ideal_mind_wandering) + abs(report.drowsiness - 1)
-
-    @staticmethod
-    def _block_selection_key(block: dict[str, Any]) -> tuple:
-        subjective_distance = block.get("subjective_ideal_distance")
-        return (
-            -int(block["eeg_quality"]["valid_epochs"]),
-            int(block["eeg_quality"]["blink_epochs"]),
-            int(block.get("blink_event_count") or 0),
-            float("inf") if subjective_distance is None else int(subjective_distance),
-            -int(block["actual_sequence_number"]),
-        )
+    def record_guidance_event(
+        self, event: str, timing_offset_ms: float | None = None
+    ) -> dict[str, Any]:
+        marker = self._marker(event)
+        return {
+            **marker.model_dump(),
+            "timing_offset_ms": timing_offset_ms,
+        }
 
     def _analyze_block(self, block: dict[str, Any]) -> dict[str, Any]:
         start_index = block["start_marker"].get("nearest_eeg_sample_index")
@@ -454,7 +389,7 @@ class CalibrationService:
             return {
                 "status": "invalid",
                 "reasons": ["markers_not_aligned"],
-                "expected_epochs": config.EXPECTED_EPOCHS_PER_BLOCK,
+                "expected_epochs": config.EXPECTED_BASELINE_EPOCHS,
                 "total_epochs": 0,
                 "valid_epochs": 0,
                 "invalid_epochs": 0,
@@ -466,28 +401,26 @@ class CalibrationService:
                 "epoch_details": [],
             }
         raw = self.receiver.snapshot_samples(int(start_index), int(end_index))
-        discard = config.BLOCK_DISCARD_SECONDS * config.SAMPLING_RATE_HZ
-        retained = raw[discard:]
-        epochs = analyze_segment(retained)
+        epochs = analyze_segment(raw)
         valid_epochs = sum(epoch.usable for epoch in epochs)
         blink_epochs = sum("blink_overlap" in epoch.quality_flags for epoch in epochs)
         reasons = []
         if not block["completed_automatically"]:
             reasons.append("incomplete_duration")
-        if valid_epochs < config.MIN_VALID_EPOCHS_PER_BLOCK:
-            reasons.append("fewer_than_4_valid_epochs")
+        if valid_epochs < config.MIN_VALID_BASELINE_EPOCHS:
+            reasons.append("fewer_than_25_valid_epochs")
         completeness = float(np.mean([epoch.packet_completeness for epoch in epochs])) if epochs else 0.0
         return {
             "status": "pass" if not reasons else "invalid",
             "reasons": reasons,
-            "expected_epochs": config.EXPECTED_EPOCHS_PER_BLOCK,
+            "expected_epochs": config.EXPECTED_BASELINE_EPOCHS,
             "total_epochs": len(epochs),
             "valid_epochs": valid_epochs,
             "invalid_epochs": len(epochs) - valid_epochs,
             "blink_epochs": blink_epochs,
             "packet_completeness": completeness,
             "raw_duration_seconds": len(raw) / config.SAMPLING_RATE_HZ,
-            "discarded_initial_seconds": config.BLOCK_DISCARD_SECONDS,
+            "discarded_initial_seconds": 0,
             "rejection_counts": dict(
                 Counter(
                     reason
@@ -509,17 +442,10 @@ class CalibrationService:
                 raise InvalidTransition("A completed block is required before self-report submission")
             block = self.current_block
             block["self_report"] = report.model_dump()
-            block["subjective_validity"] = self._subjective_validity(block["condition"], report)
-            block["subjective_ideal_distance"] = self._subjective_ideal_distance(
-                block["condition"], report
-            )
             block["eeg_quality"] = self._analyze_block(block)
-            block["eligible_for_anchor"] = bool(
-                block["subjective_validity"]["status"] == "pass"
-                and block["eeg_quality"]["status"] == "pass"
-            )
+            block["eligible_for_baseline"] = block["eeg_quality"]["status"] == "pass"
             self._marker(
-                "SELF_REPORT_SUBMITTED",
+                "BASELINE_SELF_REPORT_SUBMITTED",
                 condition=block["condition"],
                 block_number=block["condition_block_number"],
                 block_id=block["block_id"],
@@ -528,98 +454,51 @@ class CalibrationService:
             self.current_block = None
             response = {
                 "block_id": block["block_id"],
-                "subjective_validity": block["subjective_validity"],
                 "eeg_quality": {
                     key: value
                     for key, value in block["eeg_quality"].items()
                     if key != "epoch_details"
                 },
-                "eligible_for_anchor": block["eligible_for_anchor"],
-                "subjective_ideal_distance": block["subjective_ideal_distance"],
+                "eligible_for_baseline": block["eligible_for_baseline"],
             }
             self._advance_after_report()
             self._persist_protocol()
             return response
 
-    def _condition_evaluation(self) -> dict[str, dict[str, Any]]:
-        evaluations: dict[str, dict[str, Any]] = {}
+    def _baseline_evaluation(self) -> dict[str, Any]:
+        selected = self.blocks[-1:] if self.blocks else []
         for block in self.blocks:
-            block["included_in_anchor"] = False
-        for condition in (FOCUSED, FREE_THOUGHT):
-            candidates = [
-                block
-                for block in self.blocks
-                if block["condition"] == condition and block.get("eligible_for_anchor")
-            ]
-            candidates.sort(key=self._block_selection_key)
-            selected = candidates[:2]
-            for block in selected:
-                block["included_in_anchor"] = True
-            valid_epochs = sum(block["eeg_quality"]["valid_epochs"] for block in selected)
-            blink_epochs = sum(block["eeg_quality"]["blink_epochs"] for block in selected)
-            epoch_tbrs = [
-                value
-                for block in selected
-                for value in block["eeg_quality"]["epoch_tbrs"]
-                if value is not None
-            ]
-            issues: list[str] = []
-            if len(selected) < 1:
-                issues.append("no_eligible_blocks")
-            if valid_epochs < config.MIN_VALID_EPOCHS_PER_CONDITION:
-                issues.append("fewer_than_4_valid_epochs")
-            rejection_counts = Counter()
-            channel_contributions = Counter()
-            for block in selected:
-                rejection_counts.update(block["eeg_quality"]["rejection_counts"])
-                channel_contributions.update(block["eeg_quality"]["channel_contributions"])
-            evaluations[condition] = {
-                "status": "pass" if not issues else "insufficient",
-                "issues": issues,
-                "selected_block_ids": [block["block_id"] for block in selected],
-                "eligible_block_count": len(candidates),
-                "selected_block_count": len(selected),
-                "total_epochs": sum(block["eeg_quality"]["total_epochs"] for block in selected),
-                "valid_epochs": valid_epochs,
-                "invalid_epochs": sum(block["eeg_quality"]["invalid_epochs"] for block in selected),
-                "blink_epochs": blink_epochs,
-                "epoch_tbrs": epoch_tbrs,
-                "rejection_counts": dict(rejection_counts),
-                "channel_contributions": dict(channel_contributions),
-            }
-        return evaluations
-
-    def _redo_task(self, condition: str, evaluation: dict[str, Any]) -> dict[str, Any]:
-        condition_blocks = [block for block in self.blocks if block["condition"] == condition]
-        excluded = [block for block in condition_blocks if block["block_id"] not in evaluation["selected_block_ids"]]
-        redo_of = excluded[0]["block_id"] if excluded else condition_blocks[-1]["block_id"]
+            block["included_in_baseline"] = block in selected
+        block = selected[0] if selected else None
+        quality = block.get("eeg_quality") if block else None
+        issues = list(quality.get("reasons", [])) if quality else ["no_baseline_attempt"]
         return {
-            "task_id": f"{condition}_redo_1",
-            "sequence_number": len(self.original_schedule) + len(self.pending_tasks) + 1,
-            "condition": condition,
-            "condition_label": CONDITION_LABELS[condition],
-            "condition_block_number": 3,
-            "is_redo": True,
-            "redo_of_block_id": redo_of,
-            "redo_reason": list(evaluation["issues"]),
+            "status": "pass" if quality and quality["status"] == "pass" else "insufficient",
+            "issues": issues,
+            "selected_baseline_id": block["block_id"] if block else None,
+            "total_epochs": quality["total_epochs"] if quality else 0,
+            "valid_epochs": quality["valid_epochs"] if quality else 0,
+            "invalid_epochs": quality["invalid_epochs"] if quality else 0,
+            "blink_epochs": quality["blink_epochs"] if quality else 0,
+            "epoch_tbrs": [value for value in (quality["epoch_tbrs"] if quality else []) if value is not None],
+            "rejection_counts": quality["rejection_counts"] if quality else {},
+            "channel_contributions": quality["channel_contributions"] if quality else {},
         }
 
     def _advance_after_report(self) -> None:
         if self.pending_tasks:
             self.machine.transition(CalibrationState.BLOCK_READY)
             return
-        evaluations = self._condition_evaluation()
+        evaluation = self._baseline_evaluation()
         if not self.redos_planned:
             self.redos_planned = True
-            condition_order = []
-            for task in self.original_schedule:
-                if task["condition"] not in condition_order:
-                    condition_order.append(task["condition"])
-            for condition in condition_order:
-                if evaluations[condition]["status"] != "pass":
-                    self.pending_tasks.append(self._redo_task(condition, evaluations[condition]))
+            if evaluation["status"] != "pass":
+                self.pending_tasks.append(
+                    self._baseline_task(redo=True, redo_reason=evaluation["issues"])
+                )
             if self.pending_tasks:
                 self.collection_decision = "redo_required"
+                self._marker("BASELINE_REDO_REQUIRED", reason=",".join(evaluation["issues"]))
                 self.machine.transition(CalibrationState.BLOCK_READY)
                 return
         self.machine.transition(CalibrationState.PROCESSING)
@@ -633,28 +512,17 @@ class CalibrationService:
             self.store.update_metadata(processing_error=str(exc))
 
     def _process(self) -> dict[str, Any]:
-        self.processing_stage = "block_selection"
-        evaluations = self._condition_evaluation()
-        collection_ready = all(item["status"] == "pass" for item in evaluations.values())
+        self.processing_stage = "baseline_quality"
+        evaluation = self._baseline_evaluation()
+        collection_ready = evaluation["status"] == "pass"
         self.collection_decision = (
             "ready_to_continue" if collection_ready else "insufficient_after_redo"
         )
-        self.processing_stage = "median_anchor_calculation"
-        anchors = anchor_summary(
-            evaluations[FOCUSED]["epoch_tbrs"],
-            evaluations[FREE_THOUGHT]["epoch_tbrs"],
-        )
-        anchors_present = (
-            anchors["focused_meditation_anchor"] is not None
-            and anchors["free_thought_anchor"] is not None
-        )
-        mapping_status = "provisional" if collection_ready and anchors_present else "unavailable"
-        quality_issues = [
-            f"{condition}:{issue}"
-            for condition, evaluation in evaluations.items()
-            for issue in evaluation["issues"]
-        ]
-        selected_blocks = [block for block in self.blocks if block["included_in_anchor"]]
+        self.processing_stage = "baseline_calculation"
+        summary = baseline_summary(evaluation["epoch_tbrs"])
+        baseline_present = summary["baseline_log_tbr"] is not None
+        quality_issues = list(evaluation["issues"])
+        selected_blocks = [block for block in self.blocks if block["included_in_baseline"]]
         all_selected_epochs = [
             epoch
             for block in selected_blocks
@@ -676,27 +544,14 @@ class CalibrationService:
             "valid_frontal_fraction": valid_channels / possible_channels if possible_channels else 0.0,
             "researcher_quality_override": bool(metadata.get("researcher_quality_override", False)),
             "peak_to_peak_threshold_uv": config.MAX_PEAK_TO_PEAK_UV,
-            "block_policy": {
-                "duration_seconds": config.BLOCK_SECONDS,
-                "discarded_initial_seconds": config.BLOCK_DISCARD_SECONDS,
-                "expected_epochs": config.EXPECTED_EPOCHS_PER_BLOCK,
-                "minimum_valid_epochs": config.MIN_VALID_EPOCHS_PER_BLOCK,
+            "baseline_policy": {
+                "duration_seconds": config.BASELINE_SECONDS,
+                "expected_epochs": config.EXPECTED_BASELINE_EPOCHS,
+                "minimum_valid_epochs": config.MIN_VALID_BASELINE_EPOCHS,
+                "maximum_redos": config.MAX_BASELINE_REDOS,
+                "aggregation": "valid_epoch_median",
             },
-            "condition_policy": {
-                "minimum_valid_epochs": config.MIN_VALID_EPOCHS_PER_CONDITION,
-                "maximum_blink_epochs": config.MAX_BLINK_EPOCHS_PER_CONDITION,
-                "blink_handling": "record_only",
-                "block_selection_priority": [
-                    "valid_epochs_desc",
-                    "blink_epochs_asc",
-                    "blink_events_asc",
-                    "subjective_ideal_distance_asc",
-                    "acquisition_sequence_desc",
-                ],
-                "anchor_aggregation": "pooled_valid_epoch_median",
-                "maximum_redos": config.MAX_REDOS_PER_CONDITION,
-            },
-            "condition_summary": evaluations,
+            "baseline_summary": evaluation,
             "blocks": copy.deepcopy(self.blocks),
             "acclimation_attempts": copy.deepcopy(self.acclimation_attempts),
         }
@@ -706,20 +561,22 @@ class CalibrationService:
             "session_id": metadata.get("session_id"),
             "sampling_rate_hz": config.SAMPLING_RATE_HZ,
             "feature_version": FEATURE_VERSION,
-            "calibration_order": self.calibration_order,
-            **anchors,
+            **summary,
+            "effective_baseline_scale": max(
+                summary["baseline_scale"] or 0.0,
+                config.MIN_BASELINE_SCALE_LOG_TBR,
+            ),
+            "expected_epoch_count": config.EXPECTED_BASELINE_EPOCHS,
+            "valid_epoch_count": evaluation["valid_epochs"],
+            "invalid_epoch_count": evaluation["invalid_epochs"],
             "collection_decision": self.collection_decision,
             "ready_to_continue": collection_ready,
-            "mapping_status": mapping_status,
-            "mapping_available": False,
-            "mapping_explanation": (
-                "Collection passed. Mapping remains provisional until pilot separation thresholds are configured."
-                if mapping_status == "provisional"
-                else "The required self-report and EEG collection criteria were not met after the allowed redo."
-            ),
-            "quality_status": quality["status"],
+            "baseline_available": collection_ready and baseline_present,
+            "quality_status": "pass" if collection_ready else "fail",
             "quality_issues": quality_issues,
-            "selected_block_ids": [block["block_id"] for block in selected_blocks],
+            "self_reported_focus": selected_blocks[0]["self_report"]["focus"] if selected_blocks else None,
+            "self_reported_drowsiness": selected_blocks[0]["self_report"]["drowsiness"] if selected_blocks else None,
+            "selected_baseline_id": evaluation["selected_baseline_id"],
             "blocks": copy.deepcopy(self.blocks),
             "acclimation_attempts": copy.deepcopy(self.acclimation_attempts),
             "quality": {
@@ -737,7 +594,7 @@ class CalibrationService:
             completed_at=datetime.now(timezone.utc).isoformat(),
             feature_version=FEATURE_VERSION,
             collection_decision=self.collection_decision,
-            mapping_status=mapping_status,
+            baseline_available=collection_ready and baseline_present,
         )
         if self.store.writer:
             self.store.writer.flush()
@@ -764,7 +621,6 @@ class CalibrationService:
         if current and not include_epoch_details and current.get("eeg_quality"):
             current["eeg_quality"].pop("epoch_details", None)
         return {
-            "calibration_order": self.calibration_order,
             "original_schedule": copy.deepcopy(self.original_schedule),
             "pending_tasks": copy.deepcopy(self.pending_tasks),
             "next_block": copy.deepcopy(self.pending_tasks[0]) if self.pending_tasks else None,
@@ -840,12 +696,44 @@ class CalibrationService:
             "start_sample_index": segment[0].sample_index,
             "end_sample_index": segment[-1].sample_index,
             "log_tbr": result.tbr,
+            "theta": result.theta_power,
+            "beta": result.beta_power,
             "valid": result.usable,
             "quality_score": result.packet_completeness
             * (len(result.valid_channels) / 2),
             "artifact_flags": flags,
             "valid_channels": result.valid_channels,
             "packet_completeness": result.packet_completeness,
+        }
+
+    def process_replay_samples(self, samples: list[EEGSample]) -> dict:
+        """Run uploaded samples through the production epoch pipeline unchanged."""
+        first_timestamp = samples[0].monotonic_timestamp
+        epochs = analyze_segment(samples)
+        return {
+            "duration_seconds": samples[-1].monotonic_timestamp - first_timestamp,
+            "sampling_rate_hz": config.SAMPLING_RATE_HZ,
+            "epoch_seconds": config.EPOCH_SECONDS,
+            "epochs": [
+                {
+                    "timestamp_ms": (epoch.epoch_index + 1) * config.EPOCH_SECONDS * 1000,
+                    "theta": epoch.theta_power,
+                    "beta": epoch.beta_power,
+                    "log_tbr": epoch.tbr,
+                    "valid": epoch.usable,
+                    "quality_score": epoch.packet_completeness
+                    * (len(epoch.valid_channels) / 2),
+                    "artifact_flags": [
+                        *epoch.quality_flags,
+                        *[
+                            f"{channel.lower()}:{reason}"
+                            for channel, reasons in epoch.invalid_reasons.items()
+                            for reason in reasons
+                        ],
+                    ],
+                }
+                for epoch in epochs
+            ],
         }
 
     def reset(self) -> None:
@@ -859,7 +747,6 @@ class CalibrationService:
             self.result = None
             self.quality = None
             self.processing_stage = None
-            self.calibration_order = None
             self.original_schedule = []
             self.pending_tasks = []
             self.blocks = []
@@ -881,11 +768,11 @@ class CalibrationService:
                 active_duration = float(config.ACCLIMATION_SECONDS)
             elif self.machine.state == CalibrationState.BLOCK_RECORDING and self.current_block:
                 active_start = self.current_block["start_marker"]["monotonic_timestamp"]
-                active_duration = float(config.BLOCK_SECONDS)
+                active_duration = float(config.BASELINE_SECONDS)
             elapsed = max(0.0, time.monotonic() - active_start) if active_start else 0.0
             timing = {
                 "acclimation_duration_seconds": float(config.ACCLIMATION_SECONDS),
-                "block_duration_seconds": float(config.BLOCK_SECONDS),
+                "baseline_duration_seconds": float(config.BASELINE_SECONDS),
                 "active_elapsed_seconds": min(active_duration, elapsed),
                 "active_remaining_seconds": max(0.0, active_duration - elapsed),
                 "total_recorded_seconds": sum(
