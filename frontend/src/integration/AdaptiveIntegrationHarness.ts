@@ -144,7 +144,8 @@ export class AdaptiveIntegrationHarness {
     this.#plannerMode = options.plannerMode ?? 'openai';
     this.#condition = options.condition ?? 'adaptive';
     this.#epochSource = options.epochSource ?? null;
-    this.#calibrationProfile = options.calibrationProfile ?? mockCalibrationProfile;
+    this.#calibrationProfile =
+      options.calibrationProfile ?? mockCalibrationProfile;
     this.#sessionDurationMs =
       options.sessionDurationMs ?? phase1Config.sessionDurationMs;
     this.#store.getState().resetSessionStreams();
@@ -214,7 +215,7 @@ export class AdaptiveIntegrationHarness {
         this.#runMode === 'mock-fast'
           ? `${this.#sessionDurationMs / 60_000}-minute adaptive mock replay · 10× accelerated`
           : this.#epochSource
-            ? `${this.#sessionDurationMs / 60_000}-minute adaptive session · live Muse EEG`
+            ? `${this.#sessionDurationMs / 60_000}-minute adaptive session · realtime EEG source`
             : `${this.#sessionDurationMs / 60_000}-minute adaptive study replay · realtime`,
     });
     this.startTimer();
@@ -316,7 +317,7 @@ export class AdaptiveIntegrationHarness {
         status: 'running',
         elapsedTimeMs: snapshot.timestampMs,
         message: this.#epochSource
-          ? 'Adaptive live Muse session'
+          ? 'Adaptive realtime EEG session'
           : 'Adaptive mock replay',
       });
       this.#state = { ...this.#state, timestampMs: snapshot.timestampMs };

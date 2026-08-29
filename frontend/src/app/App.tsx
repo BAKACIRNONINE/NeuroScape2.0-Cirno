@@ -234,7 +234,10 @@ export function App() {
     setPage('session');
     void startAdaptiveAudio();
   };
-  const startCalibratedAdaptive = async (profile: Profile, replayFile?: File) => {
+  const startCalibratedAdaptive = async (
+    profile: Profile,
+    replayFile?: File,
+  ) => {
     const assignment = assignSharedBasePlan(profile.participant_id);
     try {
       const response = await fetch('/api/llm/health');
@@ -260,7 +263,7 @@ export function App() {
         participantId: profile.participant_id,
         runMode: 'study-realtime',
         plannerMode: 'openai',
-        userPrompt: `10-minute adaptive session · ${replayFile ? '10× raw EEG replay' : 'live Muse EEG'} · calibration ${profile.session_id}`,
+        userPrompt: `10-minute adaptive session · ${replayFile ? 'realtime raw EEG replay' : 'live Muse EEG'} · calibration ${profile.session_id}`,
         eegMode: replayFile ? 'recorded' : 'muse',
         startedAtIso: new Date().toISOString(),
         calibrationProfile: plannerProfile,
@@ -273,7 +276,7 @@ export function App() {
       });
       adaptiveIntegrationHarness.start({
         sessionId,
-        runMode: replayFile ? 'mock-fast' : 'study-realtime',
+        runMode: 'study-realtime',
         plannerMode: 'openai',
         sessionDurationMs: 10 * 60_000,
         calibrationProfile: plannerProfile,
@@ -330,18 +333,30 @@ export function App() {
       audioCaptureError.current = null;
       const sessionId = `session-${new Date().toISOString().replaceAll(/\D/g, '')}-${crypto.randomUUID().slice(0, 8)}`;
       recordingStore.start({
-        sessionId, participantId, runMode: 'non-adaptive', plannerMode: 'fixed',
+        sessionId,
+        participantId,
+        runMode: 'non-adaptive',
+        plannerMode: 'fixed',
         eegMode: replayFile ? 'recorded' : 'muse',
-        userPrompt: `Fixed non-adaptive Base Plan; ${replayFile ? '10× raw EEG replay' : 'Muse EEG'} is analyzed and logged but cannot affect sound`,
-        startedAtIso: new Date().toISOString(), calibrationProfile: plannerProfile,
-        basePlanId: assignment.basePlanId, basePlanVersion: BASE_PLAN_VERSION,
-        basePlanProfileId: 'forest_ambient_only_v1', assignmentRuleVersion: assignment.assignmentRuleVersion,
-        conditionOrder: assignment.conditionOrder, basePlanExecutionMode: 'structured-runtime',
+        userPrompt: `Fixed non-adaptive Base Plan; ${replayFile ? 'realtime raw EEG replay' : 'Muse EEG'} is analyzed and logged but cannot affect sound`,
+        startedAtIso: new Date().toISOString(),
+        calibrationProfile: plannerProfile,
+        basePlanId: assignment.basePlanId,
+        basePlanVersion: BASE_PLAN_VERSION,
+        basePlanProfileId: 'forest_ambient_only_v1',
+        assignmentRuleVersion: assignment.assignmentRuleVersion,
+        conditionOrder: assignment.conditionOrder,
+        basePlanExecutionMode: 'structured-runtime',
       });
       adaptiveIntegrationHarness.start({
-        sessionId, runMode: replayFile ? 'mock-fast' : 'study-realtime', plannerMode: 'mock',
-        participantId, condition: 'non-adaptive', calibrationProfile: plannerProfile,
-        epochSource, sessionDurationMs: 10 * 60_000,
+        sessionId,
+        runMode: 'study-realtime',
+        plannerMode: 'mock',
+        participantId,
+        condition: 'non-adaptive',
+        calibrationProfile: plannerProfile,
+        epochSource,
+        sessionDurationMs: 10 * 60_000,
       });
     } catch (error) {
       rawEegSource.current = null;

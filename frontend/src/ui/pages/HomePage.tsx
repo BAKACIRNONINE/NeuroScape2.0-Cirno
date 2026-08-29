@@ -37,7 +37,9 @@ export function HomePage({
   const [selected, setSelected] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [eegSource, setEegSource] = useState<'realtime' | 'prerecorded'>('realtime');
+  const [eegSource, setEegSource] = useState<'realtime' | 'prerecorded'>(
+    'realtime',
+  );
   const [replayFile, setReplayFile] = useState<File | null>(null);
   const normalized = participantId.trim().toUpperCase();
   const valid = /^P0*[1-9][0-9]*$/.test(normalized);
@@ -66,7 +68,10 @@ export function HomePage({
           details.profile_error ||
             'This session has no compatible calibration profile.',
         );
-      await onRealTime(details.profile, eegSource === 'prerecorded' ? replayFile ?? undefined : undefined);
+      await onRealTime(
+        details.profile,
+        eegSource === 'prerecorded' ? (replayFile ?? undefined) : undefined,
+      );
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -80,11 +85,18 @@ export function HomePage({
     try {
       const details = await api.session(selected);
       if (!details.profile || details.profile_compatible === false)
-        throw new Error(details.profile_error || 'A compatible baseline profile is required.');
-      await onNonAdaptive(details.profile, eegSource === 'prerecorded' ? replayFile ?? undefined : undefined);
+        throw new Error(
+          details.profile_error || 'A compatible baseline profile is required.',
+        );
+      await onNonAdaptive(
+        details.profile,
+        eegSource === 'prerecorded' ? (replayFile ?? undefined) : undefined,
+      );
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+    }
   };
   const completed = recordingStore.completed();
 
@@ -110,12 +122,40 @@ export function HomePage({
       )}
       <section className="glass-panel eeg-source-panel">
         <h2>EEG Source</h2>
-        <label><input type="radio" checked={eegSource === 'realtime'} onChange={() => setEegSource('realtime')} /> Real-time EEG</label>
-        <label><input type="radio" checked={eegSource === 'prerecorded'} onChange={() => setEegSource('prerecorded')} /> Pre-recorded EEG</label>
-        {eegSource === 'prerecorded' && <>
-          <input aria-label="Raw EEG CSV" type="file" accept=".csv,text/csv" onChange={(event) => setReplayFile(event.target.files?.[0] ?? null)} />
-          <small>Expected: NeuroScape raw_eeg.csv at 256 Hz with sample_index, monotonic_timestamp, TP9, AF7, AF8, and TP10; approximately 10 minutes (9–10 accepted). Replay runs at 10× while preserving original session timestamps.</small>
-        </>}
+        <label>
+          <input
+            type="radio"
+            checked={eegSource === 'realtime'}
+            onChange={() => setEegSource('realtime')}
+          />{' '}
+          Real-time EEG
+        </label>
+        <label>
+          <input
+            type="radio"
+            checked={eegSource === 'prerecorded'}
+            onChange={() => setEegSource('prerecorded')}
+          />{' '}
+          Pre-recorded EEG
+        </label>
+        {eegSource === 'prerecorded' && (
+          <>
+            <input
+              aria-label="Raw EEG CSV"
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(event) =>
+                setReplayFile(event.target.files?.[0] ?? null)
+              }
+            />
+            <small>
+              Expected: NeuroScape raw_eeg.csv at 256 Hz with sample_index,
+              monotonic_timestamp, TP9, AF7, AF8, and TP10; approximately 10
+              minutes (9–10 accepted). Replay runs in realtime while preserving
+              original session timestamps.
+            </small>
+          </>
+        )}
       </section>
       <section className="home-entry-grid">
         <article className="glass-panel">
@@ -150,7 +190,9 @@ export function HomePage({
             ))}
           </select>
           <button
-            disabled={!selected || busy || (eegSource === 'prerecorded' && !replayFile)}
+            disabled={
+              !selected || busy || (eegSource === 'prerecorded' && !replayFile)
+            }
             onClick={() => void startRealTime()}
           >
             {busy ? 'Starting…' : 'Start Adaptive Meditation'}
@@ -159,8 +201,19 @@ export function HomePage({
         <article className="glass-panel">
           <span>03</span>
           <h2>10 min Non-Adaptive Meditation</h2>
-          <p>Uses the shared opening voice and continuous forest ambience; EEG is logged but never changes playback.</p>
-          <button disabled={!valid || !selected || busy || (eegSource === 'prerecorded' && !replayFile)} onClick={() => void startNonAdaptive()}>
+          <p>
+            Uses the shared opening voice and continuous forest ambience; EEG is
+            logged but never changes playback.
+          </p>
+          <button
+            disabled={
+              !valid ||
+              !selected ||
+              busy ||
+              (eegSource === 'prerecorded' && !replayFile)
+            }
+            onClick={() => void startNonAdaptive()}
+          >
             Start Non-Adaptive Meditation
           </button>
         </article>
@@ -168,8 +221,16 @@ export function HomePage({
       {completed.adaptive && completed.nonAdaptive && (
         <section className="summary-panel home-comparison">
           <h2>Completed Session EEG Comparison</h2>
-          <EegTimelinePlot recording={completed.adaptive} title="Adaptive" compact />
-          <EegTimelinePlot recording={completed.nonAdaptive} title="Non-Adaptive" compact />
+          <EegTimelinePlot
+            recording={completed.adaptive}
+            title="Adaptive"
+            compact
+          />
+          <EegTimelinePlot
+            recording={completed.nonAdaptive}
+            title="Non-Adaptive"
+            compact
+          />
         </section>
       )}
     </main>

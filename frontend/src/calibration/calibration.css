@@ -230,6 +230,28 @@
     box-shadow: var(--shadow);
     padding: clamp(22px, 4vw, 36px);
   }
+  .calibration-content {
+    display: grid;
+    gap: 20px;
+  }
+  .signal-monitor {
+    min-width: 0;
+  }
+  .signal-monitor .section-heading {
+    margin-bottom: 18px;
+  }
+  .signal-monitor .section-heading h2 {
+    margin-bottom: 0;
+  }
+  .signal-metrics {
+    margin-bottom: 22px;
+  }
+  .waveform-chart {
+    min-width: 0;
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+  }
   .saved-profile-launcher {
     display: grid;
     grid-template-columns: minmax(220px, 1fr) minmax(360px, 1.4fr);
