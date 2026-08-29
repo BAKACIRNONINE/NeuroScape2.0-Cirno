@@ -19,10 +19,21 @@ function fail(label, detail = '') {
 }
 
 function commandVersion(command, args = ['--version']) {
-  const result = spawnSync(command, args, {
-    encoding: 'utf8',
-    shell: false,
-  });
+  const isWindowsCommandShim =
+    process.platform === 'win32' && command.toLowerCase().endsWith('.cmd');
+  const result = isWindowsCommandShim
+    ? spawnSync(
+        process.env.ComSpec || 'cmd.exe',
+        ['/d', '/s', '/c', [command, ...args].join(' ')],
+        {
+          encoding: 'utf8',
+          shell: false,
+        },
+      )
+    : spawnSync(command, args, {
+        encoding: 'utf8',
+        shell: false,
+      });
   if (result.status !== 0) return null;
   return (result.stdout || result.stderr || '').trim();
 }
