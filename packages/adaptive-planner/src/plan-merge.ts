@@ -21,6 +21,7 @@ function normalizeAmbient(
   return items.map((item) => {
     if (item.mode !== 'global') return item;
     const { locationId: _locationId, ...globalItem } = item;
+    void _locationId;
     return globalItem;
   });
 }

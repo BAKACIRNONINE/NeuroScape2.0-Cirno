@@ -316,6 +316,12 @@ export function App() {
     spatialDiagnosticHarness.start();
     setPage('session');
   };
+  // Retain legacy/developer entry points while Study Home does not expose them.
+  void start;
+  void startDemo;
+  void startAdaptive;
+  void startLongDemo;
+  void startSpatialDiagnostic;
   const startNonAdaptive = async (profile: Profile, replayFile?: File) => {
     const participantId = profile.participant_id;
     const assignment = assignSharedBasePlan(participantId);
