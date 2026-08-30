@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateEligibility, phase1Config } from '../src/index.js';
+import {
+  evaluateEligibility,
+  phase1Config,
+  restrictionsFor,
+} from '../src/index.js';
 import { mockCalibrationProfile } from '../src/fixtures.js';
 import type { AdaptationHistoryItem, AttentionState } from '../src/index.js';
 
@@ -10,9 +14,7 @@ const stateAt = (timestampMs: number): AttentionState =>
     validEpochCount: 6,
   }) as AttentionState;
 
-const historyItem = (
-  experiencedAtMs?: number,
-): AdaptationHistoryItem => ({
+const historyItem = (experiencedAtMs?: number): AdaptationHistoryItem => ({
   adaptationId: 'adapt-1',
   timestampMs: 1_000,
   ...(experiencedAtMs === undefined ? {} : { experiencedAtMs }),
@@ -34,10 +36,10 @@ describe('experienced-adaptation cooldown', () => {
     ).toMatchObject({ eligible: true, reasons: ['eligible'] });
   });
 
-  it('blocks for eighty seconds after AUDIO_STARTED and allows equality', () => {
+  it('blocks for five seconds after AUDIO_STARTED and allows equality', () => {
     expect(
       evaluateEligibility(
-        stateAt(89_999),
+        stateAt(14_999),
         mockCalibrationProfile,
         [historyItem(10_000)],
         phase1Config,
@@ -45,7 +47,7 @@ describe('experienced-adaptation cooldown', () => {
     ).toContain('adaptation_cooldown');
     expect(
       evaluateEligibility(
-        stateAt(90_000),
+        stateAt(15_000),
         mockCalibrationProfile,
         [historyItem(10_000)],
         phase1Config,
@@ -62,5 +64,35 @@ describe('experienced-adaptation cooldown', () => {
         phase1Config,
       ).eligible,
     ).toBe(true);
+  });
+
+  it('allows a second scene transition after 120 seconds but never more than two or during closing', () => {
+    const transition = {
+      ...historyItem(240_000),
+      timestampMs: 240_000,
+      scope: 'scene-transition' as const,
+    };
+    expect(
+      restrictionsFor(stateAt(359_999), [transition], phase1Config)
+        .allowSceneTransition,
+    ).toBe(false);
+    expect(
+      restrictionsFor(stateAt(360_000), [transition], phase1Config)
+        .allowSceneTransition,
+    ).toBe(true);
+    expect(
+      restrictionsFor(
+        stateAt(500_000),
+        [transition, { ...transition, timestampMs: 380_000 }],
+        phase1Config,
+      ).allowSceneTransition,
+    ).toBe(false);
+    expect(
+      restrictionsFor(
+        { ...stateAt(560_000), phase: 'closing' },
+        [transition],
+        phase1Config,
+      ).allowSceneTransition,
+    ).toBe(false);
   });
 });

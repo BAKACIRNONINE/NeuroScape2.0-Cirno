@@ -13,6 +13,7 @@ import {
   validateAndProjectPatch,
   type FutureScenePatch,
 } from './patching.js';
+import { materializeSemanticDecision2 } from './semantic-materializer.js';
 import {
   evaluateAdaptationOutcome,
   SessionAdaptationMemory,
@@ -22,6 +23,7 @@ import {
 } from './reflection.js';
 import type {
   AdaptationHistoryItem,
+  AdaptationTerminalOutcome,
   AdaptiveCheckpointResult,
   AttentionState,
   CalibrationProfile,
@@ -50,12 +52,20 @@ export class AdaptivePlannerEngine {
       patch: FutureScenePatch;
       historyItem: AdaptationHistoryItem;
       transitionUntilMs: number;
+      terminalBase: Omit<
+        AdaptationTerminalOutcome,
+        | 'terminalStatus'
+        | 'failureStage'
+        | 'reasonCodes'
+        | 'validationViolations'
+      >;
     }
   >();
   readonly #lifecycles = new Map<string, AdaptationLifecycle>();
   readonly #memory = new SessionAdaptationMemory();
   #requestSequence = 0;
   #plannerRequestInFlight = false;
+  #lastSpatialProgressionMs: number;
   #nextCheckpointMs: number;
 
   constructor(options: {
@@ -81,6 +91,7 @@ export class AdaptivePlannerEngine {
       options.config,
     );
     this.#nextCheckpointMs = this.#config.openingDurationMs;
+    this.#lastSpatialProgressionMs = this.#config.openingDurationMs;
   }
 
   async ingest(epoch: TbrEpoch): Promise<AdaptiveCheckpointResult | null> {
@@ -98,6 +109,17 @@ export class AdaptivePlannerEngine {
     const stasisPressure =
       state.timestampMs - lastMeaningfulChange >=
       this.#config.maxMeaningfulStasisMs;
+    const secondsSinceLastSpatialProgression = Math.max(
+      0,
+      (state.timestampMs - this.#lastSpatialProgressionMs) / 1_000,
+    );
+    const spatialElapsedMs = state.timestampMs - this.#lastSpatialProgressionMs;
+    const progressionPressure =
+      spatialElapsedMs >= this.#config.progressionPressureHighMs
+        ? ('high' as const)
+        : spatialElapsedMs >= this.#config.progressionPressureMediumMs
+          ? ('medium' as const)
+          : ('low' as const);
     const eligibility = {
       ...evaluateEligibility(
         state,
@@ -109,6 +131,8 @@ export class AdaptivePlannerEngine {
       ),
       secondsSinceLastMeaningfulChange,
       stasisPressure,
+      secondsSinceLastSpatialProgression,
+      progressionPressure,
       transitionInProgress: state.timestampMs < this.#transitionUntilMs,
       ...(this.#basePlan
         ? {
@@ -166,6 +190,8 @@ export class AdaptivePlannerEngine {
       restrictions: restrictionsFor(state, this.#history, this.#config),
       secondsSinceLastMeaningfulChange,
       stasisPressure,
+      secondsSinceLastSpatialProgression,
+      progressionPressure,
       transitionInProgress: state.timestampMs < this.#transitionUntilMs,
       adaptationProgress: {
         applied: this.#history.length,
@@ -188,8 +214,28 @@ export class AdaptivePlannerEngine {
       }
       result.decision = decision;
       if (!decision.shouldAdapt) return result;
-      result.timing.decision2RequestStartMs =
-        result.timing.decision1ResponseMs;
+      const adaptationId = `adapt-${state.timestampMs}`;
+      const terminal = (
+        terminalStatus: AdaptationTerminalOutcome['terminalStatus'],
+        failureStage: AdaptationTerminalOutcome['failureStage'],
+        reasonCodes: string[],
+        selectedAssetIds: string[] = [],
+        validationViolations: string[] = [],
+        destinationNodeId?: string | null,
+      ): AdaptationTerminalOutcome => ({
+        checkpointTimestampMs: state.timestampMs,
+        adaptationId,
+        decision1Intent: decision.intent,
+        decision1Scope: decision.scope,
+        adaptationBasis: decision.adaptationBasis ?? 'eeg_informed',
+        terminalStatus,
+        failureStage,
+        reasonCodes,
+        validationViolations,
+        ...(destinationNodeId ? { destinationNodeId } : {}),
+        selectedAssetIds,
+      });
+      result.timing.decision2RequestStartMs = result.timing.decision1ResponseMs;
       const decision2Input = prepareDecision2Input(
         context,
         decision,
@@ -203,33 +249,110 @@ export class AdaptivePlannerEngine {
           (item) => item.assetId,
         ),
         retrievalAudit: structuredClone(decision2Input.retrievalAudit),
+        currentNodeId: decision2Input.currentNodeId,
+        reachableNodeIds: decision2Input.reachableNodeIds,
+        unavailableDestinationNodeIds:
+          decision2Input.unavailableDestinationNodeIds,
+        progressionPressure,
+        hardEligibleCandidateIds: decision2Input.hardEligibleCandidateIds,
+        excludedCandidates: decision2Input.excludedCandidates,
       };
-      const planning = await this.#planningProvider.plan(
-        context,
-        decision,
-        decision2Input,
-      );
+      let planning;
+      try {
+        planning = await this.#planningProvider.plan(
+          context,
+          decision,
+          decision2Input,
+        );
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        result.terminalOutcome = terminal('D2_SCHEMA_REJECTED', 'decision_2', [
+          reason,
+        ]);
+        return result;
+      }
       result.timing.decision2ResponseMs =
         result.timing.decision2RequestStartMs +
         Math.ceil(planning.latencyMs ?? 0);
       if (requestId !== this.#requestSequence) {
         result.eligibility.reasons.push('stale_decision_2_response');
+        result.terminalOutcome = terminal('D2_NOT_CALLED', 'decision_2', [
+          'stale_decision_2_response',
+        ]);
         return result;
       }
-      validateDecision2Selection(planning, decision2Input);
+      try {
+        validateDecision2Selection(planning, decision2Input);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        result.planning = planning;
+        result.terminalOutcome = terminal(
+          'SEMANTIC_SELECTION_REJECTED',
+          'selection',
+          [reason],
+          [...planning.selectedAssetIds],
+          [],
+          planning.semanticOutput?.destinationNodeId,
+        );
+        return result;
+      }
       result.selectionTrace.selectedAssetIds = [...planning.selectedAssetIds];
+      if (planning.semanticOutput?.destinationNodeId)
+        result.selectionTrace.destinationNodeId =
+          planning.semanticOutput.destinationNodeId;
       const decision2ResponseSessionMs = result.timing.decision2ResponseMs;
       const validationStartedAt = performance.now();
+      const decision2SelectedAssetIds = [...planning.selectedAssetIds];
       let plan: SceneJourneyPlan;
       if (this.#basePlan) {
-        const futurePatch = normalizeLegacyPlanPatch({
-          adaptationId: `adapt-${state.timestampMs}`,
-          patch: planning.patch,
-          decision,
-          basePlan: this.#basePlan,
-          nowMs: decision2ResponseSessionMs,
-          freezeBufferMs: this.#config.executionFreezeBufferMs,
-        });
+        let futurePatch: FutureScenePatch;
+        try {
+          futurePatch = planning.semanticOutput
+            ? materializeSemanticDecision2({
+                adaptationId,
+                output: planning.semanticOutput,
+                decision,
+                basePlan: this.#basePlan,
+                nowMs: decision2ResponseSessionMs,
+                config: this.#config,
+              })
+            : normalizeLegacyPlanPatch({
+                adaptationId,
+                patch: planning.patch,
+                decision,
+                basePlan: this.#basePlan,
+                nowMs: decision2ResponseSessionMs,
+                freezeBufferMs: this.#config.executionFreezeBufferMs,
+              });
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          result.planning = planning;
+          result.terminalOutcome = terminal(
+            'MATERIALIZATION_FAILED',
+            'materialization',
+            [reason],
+            [...planning.selectedAssetIds],
+            [],
+            planning.semanticOutput?.destinationNodeId,
+          );
+          return result;
+        }
+        // Include deterministic support assets (for example transition
+        // footsteps) in preload, recording, history, and reflection traces.
+        const materializedAssetIds = futurePatch.operations.flatMap(
+          (operation) => [
+            ...(operation.insertedElement
+              ? [operation.insertedElement.assetId]
+              : []),
+            ...(operation.replacementAssetId
+              ? [operation.replacementAssetId]
+              : []),
+          ],
+        );
+        planning.selectedAssetIds = [
+          ...new Set([...planning.selectedAssetIds, ...materializedAssetIds]),
+        ];
+        result.selectionTrace.selectedAssetIds = [...planning.selectedAssetIds];
         const validation = validateAndProjectPatch({
           basePlan: this.#basePlan,
           acceptedPatches: this.#acceptedPatches,
@@ -267,6 +390,38 @@ export class AdaptivePlannerEngine {
           !validation.projectedPlan
         ) {
           result.planning = planning;
+          const patchBudgetExhausted = validation.violations.includes(
+            'PATCH_BUDGET_EXHAUSTED',
+          );
+          const noSafeChange =
+            planning.semanticOutput?.status === 'NO_SAFE_CHANGE';
+          result.terminalOutcome = {
+            checkpointTimestampMs: state.timestampMs,
+            adaptationId: futurePatch.adaptationId,
+            decision1Intent: decision.intent,
+            decision1Scope: decision.scope,
+            adaptationBasis: decision.adaptationBasis ?? 'eeg_informed',
+            terminalStatus: patchBudgetExhausted
+              ? 'PATCH_BUDGET_EXHAUSTED'
+              : noSafeChange
+                ? 'D2_NO_SAFE_CHANGE'
+                : futurePatch.status === 'NO_SAFE_PATCH'
+                  ? 'MATERIALIZATION_FAILED'
+                  : 'PATCH_VALIDATION_REJECTED',
+            failureStage: noSafeChange
+              ? 'decision_2'
+              : futurePatch.status === 'NO_SAFE_PATCH'
+                ? 'materialization'
+                : 'validation',
+            reasonCodes: [...futurePatch.reasonCodes],
+            validationViolations: [...validation.violations],
+            ...(planning.semanticOutput?.destinationNodeId
+              ? {
+                  destinationNodeId: planning.semanticOutput.destinationNodeId,
+                }
+              : {}),
+            selectedAssetIds: [...planning.selectedAssetIds],
+          };
           return result;
         }
         const projectedBasePlan = validation.projectedPlan;
@@ -287,10 +442,30 @@ export class AdaptivePlannerEngine {
             rationale: `${decision.rationale} ${planning.rationale}`,
             intent: decision.intent,
             salience: decision.salience,
+            adaptationBasis: decision.adaptationBasis,
+            semanticRoles:
+              planning.semanticOutput?.changes.map(
+                (change) => change.semanticRole,
+              ) ?? [],
+            decision2SelectedAssetIds,
+            ...(futurePatch.journeyUpdate
+              ? { destinationNodeId: futurePatch.journeyUpdate.toNodeId }
+              : {}),
           },
           transitionUntilMs:
             state.timestampMs +
-            Math.max(planning.patch.transitionDurationMs ?? 0, 0),
+            Math.max(...futurePatch.operations.map((op) => op.transitionMs), 0),
+          terminalBase: {
+            checkpointTimestampMs: state.timestampMs,
+            adaptationId: futurePatch.adaptationId,
+            decision1Intent: decision.intent,
+            decision1Scope: decision.scope,
+            adaptationBasis: decision.adaptationBasis ?? 'eeg_informed',
+            ...(futurePatch.journeyUpdate
+              ? { destinationNodeId: futurePatch.journeyUpdate.toNodeId }
+              : {}),
+            selectedAssetIds: [...planning.selectedAssetIds],
+          },
         });
       } else {
         plan = mergePlanPatch(
@@ -349,18 +524,25 @@ export class AdaptivePlannerEngine {
       | 'AUDIO_FAILED'
       | 'FAILED',
     timestampMs: number,
-  ): void {
+  ): AdaptationTerminalOutcome | undefined {
     const lifecycle = this.#lifecycles.get(adaptationId);
-    if (!lifecycle) return;
+    if (!lifecycle) return undefined;
     lifecycle.transitions.push({ status, timestampMs });
     const pending = this.#pendingApplications.get(adaptationId);
-    if (status === 'APPLIED' || status === 'PLAN_APPLIED') {
+    const shouldCommit =
+      status === 'APPLIED' ||
+      (status === 'PLAN_APPLIED' && !pending?.patch.journeyUpdate);
+    if (shouldCommit) {
       if (pending) {
         this.#basePlan = structuredClone(pending.basePlan);
         this.#currentPlan = structuredClone(pending.plan);
         this.#acceptedPatches.push(pending.patch);
+        if (pending.patch.journeyUpdate)
+          pending.historyItem.timestampMs = timestampMs;
         this.#history.push(pending.historyItem);
         this.#transitionUntilMs = pending.transitionUntilMs;
+        if (pending.patch.journeyUpdate)
+          this.#lastSpatialProgressionMs = timestampMs;
       }
       lifecycle.appliedAtMs = timestampMs;
     }
@@ -389,10 +571,72 @@ export class AdaptivePlannerEngine {
     if (status === 'AUDIO_FAILED') lifecycle.audioFailedAtMs = timestampMs;
     if (
       status === 'APPLIED' ||
-      status === 'PLAN_APPLIED' ||
+      (status === 'PLAN_APPLIED' && !pending?.patch.journeyUpdate) ||
       status === 'FAILED'
     )
       this.#pendingApplications.delete(adaptationId);
+    if (shouldCommit && pending)
+      return {
+        ...pending.terminalBase,
+        terminalStatus: 'APPLIED',
+        failureStage: 'applied',
+        reasonCodes: [...pending.patch.reasonCodes],
+        validationViolations: [],
+      };
+    if (status === 'FAILED' && pending)
+      return {
+        ...pending.terminalBase,
+        terminalStatus: 'RUNTIME_REJECTED',
+        failureStage: 'runtime',
+        reasonCodes: ['RUNTIME_REJECTED'],
+        validationViolations: [],
+      };
+    return undefined;
+  }
+
+  acknowledgeJourneyArrival(
+    destinationNodeId: string,
+    timestampMs: number,
+  ): AdaptationTerminalOutcome | undefined {
+    const pending = [...this.#pendingApplications.values()].find(
+      (item) =>
+        item.patch.journeyUpdate?.toNodeId === destinationNodeId &&
+        item.patch.journeyUpdate.arrivalTimeMs <= timestampMs,
+    );
+    return pending
+      ? this.acknowledgeApplication(
+          pending.patch.adaptationId,
+          'APPLIED',
+          timestampMs,
+        )
+      : undefined;
+  }
+
+  expireRuntimeApplications(timestampMs: number): AdaptationTerminalOutcome[] {
+    const outcomes: AdaptationTerminalOutcome[] = [];
+    for (const [adaptationId, pending] of this.#pendingApplications) {
+      const arrivalTimeMs = pending.patch.journeyUpdate?.arrivalTimeMs;
+      if (
+        arrivalTimeMs === undefined ||
+        timestampMs <= arrivalTimeMs + this.#config.checkpointIntervalMs
+      )
+        continue;
+      const lifecycle = this.#lifecycles.get(adaptationId);
+      lifecycle?.transitions.push({
+        status: 'FAILED',
+        timestampMs,
+        reasonCode: 'RUNTIME_TIMEOUT',
+      });
+      this.#pendingApplications.delete(adaptationId);
+      outcomes.push({
+        ...pending.terminalBase,
+        terminalStatus: 'RUNTIME_TIMEOUT',
+        failureStage: 'runtime',
+        reasonCodes: ['RUNTIME_TIMEOUT'],
+        validationViolations: [],
+      });
+    }
+    return outcomes;
   }
 
   private evaluatePendingOutcome(

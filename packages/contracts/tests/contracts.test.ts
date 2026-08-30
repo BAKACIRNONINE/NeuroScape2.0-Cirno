@@ -27,7 +27,7 @@ describe('shared contracts', () => {
   });
 
   it('loads the canonical authored audio library including motion durations', () => {
-    expect(audioLibrary).toHaveLength(24);
+    expect(audioLibrary).toHaveLength(27);
     expect(
       audioLibrary.find((asset) => asset.asset_id === 'forest_bird_far_01')
         ?.default_motion.duration,
@@ -42,15 +42,25 @@ describe('shared contracts', () => {
       )?.auto_delete_after_sec,
     ).toBe(7);
     expect(
-      audioLibrary.find(
-        (asset) => asset.asset_id === 'forest_stream_ambient_bed_01',
-      )?.asset_ref,
-    ).toBe('forest/ambient/forest_stream_ambient_bed_01.mp3');
+      audioLibrary.find((asset) => asset.asset_id === 'stream_lakeside_river')
+        ?.asset_ref,
+    ).toBe('stream/ambient/lakeside_river.wav');
     expect(
       audioLibrary.find(
         (asset) => asset.asset_id === 'forest_body_slow_creek_steps_01',
       )?.asset_ref,
-    ).toBe('forest/action/forest_body_slow_creek_steps_01.wav');
+    ).toBe('stream/action/forest_body_slow_creek_steps_01.wav');
+    expect(audioLibrary.some((asset) => asset.asset_id === 'ocean_waves')).toBe(
+      false,
+    );
+    expect(
+      audioLibrary.find((asset) => asset.asset_id === 'ocean_waves_soft_01')
+        ?.asset_ref,
+    ).toBe('ocean_beach/ambient/ocean_waves_soft_01.wav');
+    expect(
+      audioLibrary.find((asset) => asset.asset_id === 'meditation_opening')
+        ?.planner_eligible,
+    ).toBe(false);
   });
 
   it('publishes deterministic playback, quality, and session contracts', () => {

@@ -8,11 +8,12 @@ import type {
   LlmUsage,
   PlanningProvider,
   PlanningResult,
-  SoundscapePlanPatch,
+  Decision2SemanticOutput,
 } from './types.js';
 import { reasoningAttentionState } from './types.js';
 
-export const DECISION_1_PROMPT_VERSION = 'decision-1-guided-baseline-delta-v1';
+export const DECISION_1_PROMPT_VERSION =
+  'decision-1-guided-baseline-progression-v2';
 
 const scopes: readonly AdaptationScope[] = [
   'maintain',
@@ -37,10 +38,7 @@ interface Decision1WireOutput {
   scope: AdaptationScope;
   evidence_summary: {
     relation:
-      | 'baseline-consistent'
-      | 'tbr-elevated'
-      | 'tbr-reduced'
-      | 'uncertain';
+      'baseline-consistent' | 'tbr-elevated' | 'tbr-reduced' | 'uncertain';
     trajectory:
       'improving' | 'stable' | 'declining' | 'volatile' | 'unavailable';
     confidence: 'high' | 'medium' | 'low';
@@ -48,6 +46,12 @@ interface Decision1WireOutput {
   reason: string;
   maintain_reason: string | null;
   constraints_for_decision_2: string[];
+  adaptation_basis:
+    | 'none'
+    | 'eeg_informed'
+    | 'progression_driven'
+    | 'mixed'
+    | 'continuity_preserving';
 }
 
 export const decision1OutputSchema: Record<string, unknown> = Object.freeze({
@@ -65,6 +69,7 @@ export const decision1OutputSchema: Record<string, unknown> = Object.freeze({
       'reason',
       'maintain_reason',
       'constraints_for_decision_2',
+      'adaptation_basis',
     ],
     properties: {
       decision: { type: 'string', enum: ['adapt', 'maintain'] },
@@ -101,6 +106,16 @@ export const decision1OutputSchema: Record<string, unknown> = Object.freeze({
       reason: { type: 'string' },
       maintain_reason: { type: ['string', 'null'] },
       constraints_for_decision_2: { type: 'array', items: { type: 'string' } },
+      adaptation_basis: {
+        type: 'string',
+        enum: [
+          'none',
+          'eeg_informed',
+          'progression_driven',
+          'mixed',
+          'continuity_preserving',
+        ],
+      },
     },
   },
 });
@@ -117,9 +132,9 @@ export function buildDecision1Prompt(context: DecisionContext): string {
     'Never invent attention decline or mind wandering merely to justify a soundscape change or meet an adaptation count.',
     'Interpret raw delta, TBR ratio, robust deviation, signal quality, confidence, trajectory, duration, scene history, and prior outcomes together.',
     'Sustained, high-confidence TBR elevation may support a conservative gentle-reorientation hypothesis, but never a definitive mental-state claim.',
-    'Escalate to refresh-engagement or a scene transition only after lighter interventions have not produced a durable improvement.',
+    'A scene transition may be EEG-informed after insufficient lighter interventions, or non-corrective journey progression when progression pressure and capacity permit.',
     'Prefer maintain only when evidence is transient, already improving, low-confidence, or a recent intervention has not had enough time to take effect; do not maintain merely because the state is intermediate.',
-    'Use within-scene adaptation before scene transition. Scene transition is rare and only follows sustained high-quality evidence plus insufficient lighter interventions.',
+    'Scene transition is rare. For progression-driven transitions, never frame the change as EEG correction or detected mind wandering.',
     'Opening and closing phase restrictions are authoritative. Never request a forbidden event, body anchor, or scene transition.',
     'When stasisPressure is true, a minimal non-corrective evolution may be considered, but do not invent an EEG claim.',
     'Low-confidence or unusable EEG cannot support a corrective claim. It may only support conservative history-driven evolution or maintain.',
@@ -128,6 +143,7 @@ export function buildDecision1Prompt(context: DecisionContext): string {
     'adaptationProgress is a soft session-level target, never permission to violate safety or invent an EEG claim. When behindPace is true and a safe minimal system-sound evolution exists, prefer that evolution over repeated maintain; when no safe useful change exists, maintain remains valid.',
     'If decision=maintain, intent must be maintain or preserve_recovery, scope must be maintain, and maintain_reason must be concrete.',
     'If decision=adapt, intent and scope must not be maintain. Pass salience and constraints_for_decision_2 without selecting assets.',
+    'constraints_for_decision_2 should constrain safety, maximum scope, salience, continuity, forbidden operations, and evidentiary framing. Do not prescribe an audio layer, asset family, bird-like cue, brief natural event, or exact acoustic tactic unless a hard system restriction requires it. Decision 2 owns semantic sound-design selection.',
     'Maintain means preserving the currently scheduled Base Plan evolution; it never means freezing the current soundscape or cancelling scheduled future events.',
     'Use supplied prior outcomes only as non-causal, provisional observations. If the last applied patch is not yet observable, avoid stacking another intervention unless clearly necessary.',
     'Provide a concise, inspectable rationale based only on supplied observations. Do not claim objective mind-wandering detection and do not expose hidden chain-of-thought.',
@@ -154,6 +170,13 @@ export function buildDecision1Prompt(context: DecisionContext): string {
         planId: context.currentPlan.planId,
         currentLocation:
           context.currentPlan.userJourney.waypoints.at(-1)?.locationId,
+        secondsSinceLastSpatialProgression:
+          context.secondsSinceLastSpatialProgression ?? 0,
+        progressionPressure: context.progressionPressure ?? 'low',
+        appliedSceneTransitions: context.history.filter(
+          (item) => item.scope === 'scene-transition',
+        ).length,
+        transitionsRemaining: context.restrictions.sceneTransitionsRemaining,
         activeAmbientIds: context.currentPlan.soundscape.ambient
           .filter((item) => item.active)
           .map((item) => item.id),
@@ -273,6 +296,7 @@ export class OpenAIDecisionProvider implements DecisionProvider {
         decision: 'maintain',
         intent: 'maintain',
         salience: 'minimal',
+        adaptationBasis: 'none',
         evidenceSummary: {
           relation: context.state.baselineRelation,
           trajectory: context.state.trajectory,
@@ -308,6 +332,7 @@ export class OpenAIDecisionProvider implements DecisionProvider {
       decision: response.output.decision,
       intent: response.output.intent,
       salience: response.output.salience,
+      adaptationBasis: response.output.adaptation_basis,
       evidenceSummary: response.output.evidence_summary,
       reason: response.output.reason,
       maintainReason: response.output.maintain_reason,
@@ -329,49 +354,6 @@ export class OpenAIDecisionProvider implements DecisionProvider {
   }
 }
 
-interface Decision2WireOutput {
-  status: 'PATCH_PROPOSED' | 'NO_SAFE_PATCH';
-  intent: AdaptationDecision['intent'];
-  patchOperations: Array<{
-    operation:
-      'KEEP' | 'ADJUST' | 'RESCHEDULE' | 'REPLACE' | 'SUPPRESS' | 'INSERT';
-    targetElementId: string | null;
-    effectiveStartMs: number;
-    transitionMs: number;
-    replacementAssetId: string | null;
-  }>;
-  preservedElementIds: string[];
-  adaptationHypothesis: Record<string, string>;
-  reflectionUsed: {
-    priorAdaptationIds: string[];
-    lessonCode: string | null;
-    lessonConfidence: 'high' | 'medium' | 'low' | 'unavailable';
-  };
-  reasonCodes: string[];
-  patch: SoundscapePlanPatch & {
-    journey?: SoundscapePlanPatch['journey'] | null;
-  };
-  selectedAssetIds: string[];
-  rationale: string;
-}
-
-function normalizePatch(
-  patch: Decision2WireOutput['patch'],
-): SoundscapePlanPatch {
-  const normalized: SoundscapePlanPatch = {
-    reasoningSummary: patch.reasoningSummary,
-  };
-  if (patch.journey) normalized.journey = patch.journey;
-  if (patch.upsertAmbient?.length)
-    normalized.upsertAmbient = patch.upsertAmbient;
-  if (patch.upsertAction?.length) normalized.upsertAction = patch.upsertAction;
-  if (patch.upsertEvent?.length) normalized.upsertEvent = patch.upsertEvent;
-  if (patch.removeIds?.length) normalized.removeIds = patch.removeIds;
-  if (patch.transitionDurationMs !== undefined)
-    normalized.transitionDurationMs = patch.transitionDurationMs;
-  return normalized;
-}
-
 export class OpenAIPlanningProvider implements PlanningProvider {
   readonly #options: OpenAIProviderOptions;
 
@@ -385,7 +367,7 @@ export class OpenAIPlanningProvider implements PlanningProvider {
     input: Decision2Input,
   ): Promise<PlanningResult> {
     const startedAt = performance.now();
-    const response = await requestStructuredOutput<Decision2WireOutput>(
+    const response = await requestStructuredOutput<Decision2SemanticOutput>(
       '/api/llm/decision-2',
       {
         promptVersion: input.promptVersion,
@@ -395,10 +377,9 @@ export class OpenAIPlanningProvider implements PlanningProvider {
       },
       this.#options,
     );
-    if (response.output.intent !== decision.intent)
-      throw new Error('Decision 2 attempted to change Decision 1 intent.');
     return {
-      patch: normalizePatch(response.output.patch),
+      patch: { reasoningSummary: response.output.rationale },
+      semanticOutput: response.output,
       selectedAssetIds: response.output.selectedAssetIds,
       candidateAssetIds: input.candidates.map((candidate) => candidate.assetId),
       promptVersion: input.promptVersion,
