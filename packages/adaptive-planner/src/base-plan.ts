@@ -51,6 +51,8 @@ export interface BasePlanElement {
   replaceable: boolean;
   suppressible: boolean;
   payload: AmbientPlanItem | ActionPlanItem | EventPlanItem;
+  /** Persistent acoustic identity established for an arrived graph node. */
+  destinationFoundationFor?: string;
 }
 
 export interface BaseScenePlan {

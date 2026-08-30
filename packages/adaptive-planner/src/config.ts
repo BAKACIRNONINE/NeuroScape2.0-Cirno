@@ -20,6 +20,12 @@ export interface AdaptivePlannerConfig {
   assetFamilyCooldownMs: number;
   bodyAnchorCooldownMs: number;
   maxMeaningfulStasisMs: number;
+  /** TBD_PILOT: spatial progression context, independent of local adaptation. */
+  progressionPressureMediumMs: number;
+  /** TBD_PILOT: context for D1, never a forced-transition threshold. */
+  progressionPressureHighMs: number;
+  /** TBD_PILOT: destination identity must persist this long after arrival. */
+  destinationStabilizationMinMs: number;
   patchHorizonMs: number;
   executionFreezeBufferMs: number;
   outcomeObservationWindowMs: number;
@@ -46,7 +52,8 @@ export const phase1Config: AdaptivePlannerConfig = Object.freeze({
   openingDurationMs: 60_000,
   epochDurationMs: 10_000,
   analysisWindowMs: 60_000,
-  checkpointIntervalMs: 40_000,
+  // Decision 1/2 reasoning cadence requested for the live adaptive session.
+  checkpointIntervalMs: 20_000,
   minimumValidEpochs: 5,
   trendWindowCount: 3,
   // Preserve the Phase-1 EEG trend horizon independently of planner cadence.
@@ -57,13 +64,16 @@ export const phase1Config: AdaptivePlannerConfig = Object.freeze({
   highVariabilityMad: 0.12,
   sustainedWindowCount: 2,
   minimumConfidence: 0.6,
-  adaptationCooldownMs: 80_000,
-  sceneTransitionCooldownMs: 200_000,
-  maxSceneTransitions: 5,
+  adaptationCooldownMs: 5_000,
+  sceneTransitionCooldownMs: 120_000,
+  maxSceneTransitions: 2,
   exactAssetCooldownMs: 90_000,
   assetFamilyCooldownMs: 45_000,
   bodyAnchorCooldownMs: 80_000,
   maxMeaningfulStasisMs: 80_000,
+  progressionPressureMediumMs: 120_000,
+  progressionPressureHighMs: 200_000,
+  destinationStabilizationMinMs: 45_000,
   // TBD_PILOT: receding-horizon, latency, and restrained-complexity policy.
   patchHorizonMs: 120_000,
   // Minimal lead time for deterministic validation/plan handoff. Runtime's
@@ -79,7 +89,7 @@ export const phase1Config: AdaptivePlannerConfig = Object.freeze({
   maxBodyAnchorsPerMinute: 1,
   maxSalienceLoad: 1,
   reservedAdaptationHeadroom: 0.25,
-  maxCumulativePatches: 6,
+  maxCumulativePatches: 10,
   targetAdaptationsMin: 5,
   targetAdaptationsMax: 6,
 });
