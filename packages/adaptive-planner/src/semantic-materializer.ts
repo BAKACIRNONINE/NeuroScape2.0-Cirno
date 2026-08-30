@@ -12,6 +12,7 @@ import type { FuturePatchOperation, FutureScenePatch } from './patching.js';
 import type { AdaptationDecision, Decision2SemanticOutput } from './types.js';
 
 export const SEMANTIC_MATERIALIZER_VERSION = 'semantic_materializer_v1';
+export const SCENE_TRAVERSAL_DURATION_MS = 25_000;
 const MIX_GAIN_MULTIPLIER = Object.freeze({
   default: 1,
   slightly_softer: 0.85,
@@ -38,6 +39,7 @@ function insertedElement(
   locationId: string,
   mix: keyof typeof MIX_GAIN_MULTIPLIER | null,
   base: BaseScenePlan,
+  durationOverrideMs?: number,
 ): BasePlanElement | undefined {
   const asset = audioLibraryById.get(assetId);
   if (!asset?.playback_contract) return undefined;
@@ -49,11 +51,12 @@ function insertedElement(
       asset.auto_delete_after_sec ??
       0) * 1_000;
   const durationMs =
-    asset.layer === 'ambient'
+    durationOverrideMs ??
+    (asset.layer === 'ambient'
       ? base.profile.durationMs - startMs
       : asset.layer === 'action' && asset.playback_contract.mode === 'long_bed'
         ? base.transitionPolicy.defaultDurationMs
-        : authoredLifecycleMs;
+        : authoredLifecycleMs);
   if (durationMs <= 0) return undefined;
   const endMs = Math.min(base.profile.durationMs, startMs + durationMs);
   const isFootstep =
@@ -183,6 +186,9 @@ export function materializeSemanticDecision2(options: {
     !invalidDestination &&
     !incoherentAsset,
   );
+  const operationTransitionMs = validTransition
+    ? SCENE_TRAVERSAL_DURATION_MS
+    : basePlan.transitionPolicy.defaultDurationMs;
   const operations: FuturePatchOperation[] = [];
   if (
     !invalidDestination &&
@@ -201,14 +207,14 @@ export function materializeSemanticDecision2(options: {
           operation: 'SUPPRESS',
           targetElementId: target.elementId,
           effectiveStartMs: startMs,
-          transitionMs: basePlan.transitionPolicy.defaultDurationMs,
+          transitionMs: operationTransitionMs,
         });
       else if (change.operation === 'ADJUST' && target)
         operations.push({
           operation: 'ADJUST',
           targetElementId: target.elementId,
           effectiveStartMs: startMs,
-          transitionMs: basePlan.transitionPolicy.defaultDurationMs,
+          transitionMs: operationTransitionMs,
           gain: gainFor(target.assetId, change.mixIntent),
         });
       else if (change.operation === 'REPLACE' && target && change.assetId)
@@ -216,7 +222,7 @@ export function materializeSemanticDecision2(options: {
           operation: 'REPLACE',
           targetElementId: target.elementId,
           effectiveStartMs: startMs,
-          transitionMs: basePlan.transitionPolicy.defaultDurationMs,
+          transitionMs: operationTransitionMs,
           replacementAssetId: canonicalAsset(change.assetId),
           ...(destination && change.semanticRole === 'foundation'
             ? { destinationFoundationFor: destination }
@@ -236,7 +242,7 @@ export function materializeSemanticDecision2(options: {
           operations.push({
             operation: 'INSERT',
             effectiveStartMs: startMs,
-            transitionMs: basePlan.transitionPolicy.defaultDurationMs,
+            transitionMs: operationTransitionMs,
             insertedElement: element,
             ...(destination && change.semanticRole === 'foundation'
               ? { destinationFoundationFor: destination }
@@ -262,12 +268,13 @@ export function materializeSemanticDecision2(options: {
         destination,
         'default',
         basePlan,
+        SCENE_TRAVERSAL_DURATION_MS,
       );
       if (footsteps)
         operations.push({
           operation: 'INSERT',
           effectiveStartMs: startMs,
-          transitionMs: basePlan.transitionPolicy.defaultDurationMs,
+          transitionMs: SCENE_TRAVERSAL_DURATION_MS,
           insertedElement: footsteps,
           systemGenerated: 'scene_transition_footsteps',
         });
@@ -302,8 +309,7 @@ export function materializeSemanticDecision2(options: {
           journeyUpdate: {
             fromNodeId: currentNodeId,
             toNodeId: destination,
-            arrivalTimeMs:
-              startMs + basePlan.transitionPolicy.defaultDurationMs,
+            arrivalTimeMs: startMs + SCENE_TRAVERSAL_DURATION_MS,
           },
         }
       : {}),

@@ -5,6 +5,7 @@ import {
   materializeSemanticDecision2,
   footstepAssetForTransition,
   phase1Config,
+  SCENE_TRAVERSAL_DURATION_MS,
   validateAndProjectPatch,
 } from '../src/index.js';
 import type {
@@ -78,6 +79,14 @@ describe('semantic Decision 2 materializer', () => {
       attachment: 'feet',
       activationCondition: 'listener-moving',
     });
+    expect(
+      locomotion!.insertedElement!.endMs -
+        locomotion!.insertedElement!.startMs,
+    ).toBe(SCENE_TRAVERSAL_DURATION_MS);
+    expect(
+      patch.journeyUpdate!.arrivalTimeMs -
+        (200_000 + phase1Config.executionFreezeBufferMs),
+    ).toBe(SCENE_TRAVERSAL_DURATION_MS);
     const validation = validateAndProjectPatch({
       basePlan,
       acceptedPatches: [],

@@ -7,6 +7,10 @@ import type { AmbientController } from '../controllers/AmbientController.js';
 import type { EventController } from '../controllers/EventController.js';
 import type { JourneyController } from '../controllers/JourneyController.js';
 import type { TransitionController } from '../controllers/TransitionController.js';
+import {
+  SceneTransitionCoordinator,
+  type RuntimeSceneTransitionState,
+} from '../controllers/SceneTransitionCoordinator.js';
 import type { RuntimeEventBus } from '../events/RuntimeEvents.js';
 import { noopRuntimeLogger, type RuntimeLogger } from '../logging/index.js';
 import type { PlanValidator } from '../validation/PlanValidator.js';
@@ -36,6 +40,7 @@ export class RuntimeController {
   readonly #event: EventController;
   readonly #transitions: TransitionController;
   readonly #events: RuntimeEventBus;
+  readonly #sceneTransitions: SceneTransitionCoordinator;
   readonly #logger: RuntimeLogger;
 
   constructor(dependencies: RuntimeControllerDependencies) {
@@ -47,6 +52,7 @@ export class RuntimeController {
     this.#event = dependencies.event;
     this.#transitions = dependencies.transitions;
     this.#events = dependencies.events;
+    this.#sceneTransitions = new SceneTransitionCoordinator(this.#events);
     this.#logger = dependencies.logger ?? noopRuntimeLogger;
     this.#events.subscribe((event) => {
       this.#logger.log({
@@ -81,6 +87,7 @@ export class RuntimeController {
       0,
     );
     this.#activePlan = validatedPlan;
+    this.#sceneTransitions.initialize(0);
     this.#currentState = this.buildSnapshot(listener);
     this.#logger.log({
       timestampMs: 0,
@@ -98,6 +105,7 @@ export class RuntimeController {
     this.#timestampMs += deltaTimeMs;
 
     const listener = this.#journey.update(deltaTimeMs);
+    this.#sceneTransitions.update(deltaTimeMs, listener);
     this.#ambient.update(deltaTimeMs, listener);
     this.#action.update(deltaTimeMs, listener);
     this.#event.update(deltaTimeMs, listener);
@@ -113,11 +121,25 @@ export class RuntimeController {
       return;
     }
 
+    const currentListener = this.#journey.getListenerState();
+    const destination = validatedPlan.userJourney.waypoints.at(-1);
+    if (
+      destination &&
+      destination.locationId !== currentListener.semanticLocation
+    )
+      this.#sceneTransitions.start({
+        fromLocationId: currentListener.semanticLocation,
+        toLocationId: destination.locationId,
+        arrivalTimeMs:
+          destination.arrivalTimeMs ??
+          this.#timestampMs + validatedPlan.transitionPolicy.defaultDurationMs,
+      });
+
     this.#journey.replacePlan(validatedPlan);
     const listener = this.#journey.getListenerState();
     this.#ambient.merge(
       validatedPlan.soundscape.ambient,
-      validatedPlan.transitionPolicy,
+      this.#sceneTransitions.ambientPolicy(validatedPlan.transitionPolicy),
     );
     this.#action.merge(
       validatedPlan.soundscape.action,
@@ -149,6 +171,7 @@ export class RuntimeController {
     this.#action.reset();
     this.#event.reset();
     this.#transitions.reset();
+    this.#sceneTransitions.reset();
     this.#activePlan = undefined;
     this.#currentState = undefined;
     this.#timestampMs = 0;
@@ -171,6 +194,10 @@ export class RuntimeController {
 
   get events(): RuntimeEventBus {
     return this.#events;
+  }
+
+  get sceneTransitionState(): RuntimeSceneTransitionState | undefined {
+    return this.#sceneTransitions.state;
   }
 
   private buildSnapshot(

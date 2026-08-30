@@ -101,6 +101,43 @@ describe('RuntimeController Phase 2 integration', () => {
     expect(controller.currentState).toBe(previous);
   });
 
+  it('coordinates an authored scene transition without teleporting', () => {
+    const { controller, events } = createRuntimeHarness();
+    controller.initialize(sceneJourneyPlanFixture);
+    controller.update(1_000);
+    const before = controller.currentState!.listener.worldPosition;
+
+    controller.applyPlan({
+      ...sceneJourneyPlanFixture,
+      planId: 'scene-transition',
+      userJourney: {
+        goal: 'move to clearing',
+        waypoints: [
+          { locationId: 'forest_entry' },
+          { locationId: 'clearing', arrivalTimeMs: 26_000 },
+        ],
+      },
+    });
+
+    expect(controller.currentState!.listener.worldPosition).toEqual(before);
+    expect(controller.sceneTransitionState).toMatchObject({
+      fromLocationId: 'forest_entry',
+      toLocationId: 'clearing',
+      phase: 'traversing',
+      arrivalTimeMs: 26_000,
+    });
+    controller.update(24_000);
+    expect(controller.currentState!.listener.semanticLocation).toBe(
+      'forest_entry',
+    );
+    controller.update(1_000);
+    expect(controller.currentState!.listener.semanticLocation).toBe('clearing');
+    expect(controller.sceneTransitionState?.phase).toBe('arriving');
+    expect(
+      events.history.some((event) => event.type === 'SceneTransitionStarted'),
+    ).toBe(true);
+  });
+
   it('requires initialization, validates elapsed time, and supports shutdown', () => {
     const { controller } = createRuntimeHarness();
     expect(() => controller.update(1)).toThrow(/not initialized/);
