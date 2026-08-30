@@ -52,6 +52,7 @@ export class AdaptivePlannerEngine {
       patch: FutureScenePatch;
       historyItem: AdaptationHistoryItem;
       transitionUntilMs: number;
+      lastSpatialProgressionMs: number;
       terminalBase: Omit<
         AdaptationTerminalOutcome,
         | 'terminalStatus'
@@ -59,6 +60,12 @@ export class AdaptivePlannerEngine {
         | 'reasonCodes'
         | 'validationViolations'
       >;
+      previousBasePlan?: BaseScenePlan;
+      previousPlan?: SceneJourneyPlan;
+      previousTransitionUntilMs?: number;
+      previousLastSpatialProgressionMs?: number;
+      previousAcceptedPatches?: FutureScenePatch[];
+      previousHistory?: AdaptationHistoryItem[];
     }
   >();
   readonly #lifecycles = new Map<string, AdaptationLifecycle>();
@@ -429,6 +436,14 @@ export class AdaptivePlannerEngine {
         // Runtime validation/application is the commit boundary. Keep the
         // projected state pending so a rejected plan cannot contaminate later
         // Decision 1/2 context, cooldowns, or reflection history.
+        const previousBasePlan = this.#basePlan
+          ? structuredClone(this.#basePlan)
+          : undefined;
+        const previousPlan = structuredClone(this.#currentPlan);
+        const previousTransitionUntilMs = this.#transitionUntilMs;
+        const previousLastSpatialProgressionMs = this.#lastSpatialProgressionMs;
+        const previousAcceptedPatches = structuredClone(this.#acceptedPatches);
+        const previousHistory = structuredClone(this.#history);
         this.#pendingApplications.set(futurePatch.adaptationId, {
           basePlan: projectedBasePlan,
           plan: structuredClone(plan),
@@ -455,6 +470,7 @@ export class AdaptivePlannerEngine {
           transitionUntilMs:
             state.timestampMs +
             Math.max(...futurePatch.operations.map((op) => op.transitionMs), 0),
+          lastSpatialProgressionMs: this.#lastSpatialProgressionMs,
           terminalBase: {
             checkpointTimestampMs: state.timestampMs,
             adaptationId: futurePatch.adaptationId,
@@ -466,6 +482,12 @@ export class AdaptivePlannerEngine {
               : {}),
             selectedAssetIds: [...planning.selectedAssetIds],
           },
+          previousBasePlan,
+          previousPlan,
+          previousTransitionUntilMs,
+          previousLastSpatialProgressionMs,
+          previousAcceptedPatches,
+          previousHistory,
         });
       } else {
         plan = mergePlanPatch(
@@ -583,7 +605,8 @@ export class AdaptivePlannerEngine {
         reasonCodes: [...pending.patch.reasonCodes],
         validationViolations: [],
       };
-    if (status === 'FAILED' && pending)
+    if (status === 'FAILED' && pending) {
+      this.#rollbackPendingApplication(adaptationId, pending);
       return {
         ...pending.terminalBase,
         terminalStatus: 'RUNTIME_REJECTED',
@@ -591,6 +614,7 @@ export class AdaptivePlannerEngine {
         reasonCodes: ['RUNTIME_REJECTED'],
         validationViolations: [],
       };
+    }
     return undefined;
   }
 
@@ -614,7 +638,7 @@ export class AdaptivePlannerEngine {
 
   expireRuntimeApplications(timestampMs: number): AdaptationTerminalOutcome[] {
     const outcomes: AdaptationTerminalOutcome[] = [];
-    for (const [adaptationId, pending] of this.#pendingApplications) {
+    for (const [adaptationId, pending] of [...this.#pendingApplications]) {
       const arrivalTimeMs = pending.patch.journeyUpdate?.arrivalTimeMs;
       if (
         arrivalTimeMs === undefined ||
@@ -627,7 +651,7 @@ export class AdaptivePlannerEngine {
         timestampMs,
         reasonCode: 'RUNTIME_TIMEOUT',
       });
-      this.#pendingApplications.delete(adaptationId);
+      this.#rollbackPendingApplication(adaptationId, pending);
       outcomes.push({
         ...pending.terminalBase,
         terminalStatus: 'RUNTIME_TIMEOUT',
@@ -637,6 +661,38 @@ export class AdaptivePlannerEngine {
       });
     }
     return outcomes;
+  }
+
+  #rollbackPendingApplication(
+    adaptationId: string,
+    pending: {
+      basePlan: BaseScenePlan;
+      plan: SceneJourneyPlan;
+      patch: FutureScenePatch;
+      historyItem: AdaptationHistoryItem;
+      transitionUntilMs: number;
+      lastSpatialProgressionMs: number;
+      previousBasePlan?: BaseScenePlan;
+      previousPlan?: SceneJourneyPlan;
+      previousTransitionUntilMs?: number;
+      previousLastSpatialProgressionMs?: number;
+      previousAcceptedPatches?: FutureScenePatch[];
+      previousHistory?: AdaptationHistoryItem[];
+    },
+  ): void {
+    this.#pendingApplications.delete(adaptationId);
+    if (pending.previousBasePlan) this.#basePlan = structuredClone(pending.previousBasePlan);
+    if (pending.previousPlan) this.#currentPlan = structuredClone(pending.previousPlan);
+    if (pending.previousTransitionUntilMs !== undefined)
+      this.#transitionUntilMs = pending.previousTransitionUntilMs;
+    if (pending.previousLastSpatialProgressionMs !== undefined)
+      this.#lastSpatialProgressionMs = pending.previousLastSpatialProgressionMs;
+    this.#acceptedPatches.length = 0;
+    if (pending.previousAcceptedPatches)
+      this.#acceptedPatches.push(...structuredClone(pending.previousAcceptedPatches));
+    this.#history.length = 0;
+    if (pending.previousHistory)
+      this.#history.push(...structuredClone(pending.previousHistory));
   }
 
   private evaluatePendingOutcome(

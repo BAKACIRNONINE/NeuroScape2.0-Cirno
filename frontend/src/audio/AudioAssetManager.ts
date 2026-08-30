@@ -19,7 +19,8 @@ export class AudioAssetError extends Error {
       | 'NOT_REGISTERED'
       | 'FETCH_FAILED'
       | 'DECODE_FAILED'
-      | 'INVALID_PLAYBACK_POLICY',
+      | 'INVALID_PLAYBACK_POLICY'
+      | 'AUDIO_START_TIMEOUT',
     readonly assetId: string,
     message: string,
     readonly cause?: unknown,

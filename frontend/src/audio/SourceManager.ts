@@ -194,6 +194,29 @@ export class SourceManager {
     return source;
   }
 
+  #failIfStalled(
+    source: ManagedSource,
+    timestampMs: number,
+  ): boolean {
+    if (
+      source.runtimeActivationMs === undefined ||
+      source.playbackState !== 'loading'
+    )
+      return false;
+    const elapsedMs = timestampMs - source.runtimeActivationMs;
+    if (elapsedMs < 5_000) return false;
+    source.playbackState = 'error';
+    source.error = new AudioAssetError(
+      'AUDIO_START_TIMEOUT',
+      source.assetId,
+      `Audio start timeout for ${source.assetId} after ${elapsedMs}ms.`,
+    );
+    this.#playback.stop(source, this.#context.currentTime);
+    this.#publishFailure(source, source.error, timestampMs);
+    this.#onChange();
+    return true;
+  }
+
   #update(
     key: string,
     category: SourceCategory,
@@ -226,6 +249,7 @@ export class SourceManager {
       source.runtimeActivationPublished = true;
       this.#publish(source, 'RUNTIME_ACTIVATED', source.runtimeActivationMs);
     }
+    if (this.#failIfStalled(source, timestampMs)) return;
     // Safety and authoring constraints belong in deterministic validation. At
     // this boundary the validated runtime gain is authoritative.
     const resolvedGain = sound.gain;
@@ -300,6 +324,7 @@ export class SourceManager {
       if (source?.generation !== generation || this.sources.get(key) !== source)
         return;
       if (!source.desiredActive) return;
+      if (this.#failIfStalled(source, this.#latestTimestampMs)) return;
       if (!result.ok) {
         source.playbackState = 'error';
         source.error = result.error;
@@ -311,6 +336,7 @@ export class SourceManager {
         this.#onChange();
         return;
       }
+      if (source.playbackState !== 'loading') return;
       const startAt = this.#audioTimeFor(timestampMs);
       const started =
         playback.mode === 'repeat'

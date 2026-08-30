@@ -280,6 +280,60 @@ describe('SourceManager', () => {
     });
   });
 
+  it('fails a stalled runtime activation instead of silently leaving it unstarted', async () => {
+    const context = new FakeAudioContext();
+    const master = new FakeNode() as unknown as AudioNode;
+    const evidence: AudioPlaybackEvidence[] = [];
+    const manager = new SourceManager(
+      context as unknown as BaseAudioContext,
+      master,
+      new AudioAssetManager(
+        [{ assetId: 'event.bird', url: '/bird' }],
+        async () => fakeBuffer,
+        async () => ({
+          ok: true,
+          status: 200,
+          arrayBuffer: async () => new ArrayBuffer(1),
+        }),
+      ),
+      new GainManager(),
+      new PlaybackScheduler(context as unknown as BaseAudioContext),
+      new HRTFRenderer(context as unknown as BaseAudioContext, master),
+      () => undefined,
+      (event) => evidence.push(event),
+    );
+    const state = snapshot(1_250);
+    state.ambient = [];
+    state.action = [];
+    state.event = [
+      {
+        ...state.event[0]!,
+        adaptationId: 'adapt-stalled',
+        plannedStartMs: 1_000,
+        runtimeActivationMs: 1_200,
+        plannedEndMs: 10_000,
+        active: true,
+        lifecycle: 'active',
+        playback: { mode: 'once', durationPolicy: 'truncate-at-end' },
+      },
+    ];
+    manager.reconcile(state);
+    await flush();
+    expect(evidence.at(0)).toMatchObject({ status: 'RUNTIME_ACTIVATED' });
+
+    const source = manager.sources.get('event:bird');
+    expect(source).toBeDefined();
+    source!.playbackState = 'loading';
+    source!.runtimeActivationMs = 1_200;
+    state.timestampMs = 7_000;
+    manager.reconcile(state);
+    expect(evidence.at(-1)).toMatchObject({
+      status: 'AUDIO_FAILED',
+      failureCode: 'AUDIO_START_TIMEOUT',
+      assetId: 'event.bird',
+    });
+  });
+
   it('reports an explicit audio failure and never counts it as started', async () => {
     const context = new FakeAudioContext();
     const master = new FakeNode() as unknown as AudioNode;

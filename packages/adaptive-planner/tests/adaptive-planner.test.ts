@@ -359,6 +359,88 @@ describe('adaptive planner Phase 1', () => {
     );
   });
 
+  it('rolls back a timed-out scene transition to the origin plan', async () => {
+    const basePlan = createForestBasePlan(phase1Config);
+    const planner = new AdaptivePlannerEngine({
+      config: phase1Config,
+      profile: mockCalibrationProfile,
+      initialPlan: initialForestPlan,
+      basePlan,
+      decisionProvider: {
+        decide: async () => ({
+          decision: 'adapt',
+          intent: 'refresh_engagement',
+          salience: 'low',
+          adaptationBasis: 'progression_driven',
+          evidenceSummary: {
+            relation: 'baseline-consistent',
+            trajectory: 'stable',
+            confidence: 'high',
+          },
+          reason: 'test transition',
+          maintainReason: null,
+          constraintsForDecision2: [],
+          shouldAdapt: true,
+          goal: 'refresh-engagement',
+          scope: 'scene-transition',
+          rationale: 'test transition',
+          provider: 'test',
+        }),
+      },
+      planningProvider: {
+        plan: async (_context, _decision, input) => ({
+          patch: { reasoningSummary: 'semantic transition' },
+          semanticOutput: {
+            status: 'CHANGE_PROPOSED',
+            destinationNodeId: 'stream_bank',
+            changes: [
+              {
+                operation: 'INSERT',
+                assetId: 'stream_lakeside_river',
+                targetElementId: null,
+                semanticRole: 'foundation',
+                mixIntent: 'default',
+              },
+            ],
+            selectedAssetIds: ['stream_lakeside_river'],
+            reasonCodes: ['DESTINATION_FOUNDATION_SELECTED'],
+            rationale: 'Establish Stream Bank identity.',
+          },
+          selectedAssetIds: ['stream_lakeside_river'],
+          candidateAssetIds: input.retrievedCandidateIds,
+          promptVersion: input.promptVersion,
+          prompt: input.prompt,
+          outputSchema: input.outputSchema,
+          rationale: 'test',
+          provider: 'test',
+        }),
+      },
+    });
+    let proposal: any;
+    for (const epoch of createMockTbrReplay()) {
+      const result = await planner.ingest(epoch);
+      if (result?.futurePatch?.journeyUpdate) {
+        proposal = result;
+        break;
+      }
+    }
+    expect(proposal!.patchValidation?.valid).toBe(true);
+    planner.acknowledgeApplication(
+      proposal!.futurePatch!.adaptationId,
+      'PLAN_APPLIED',
+      proposal!.state.timestampMs,
+    );
+    const timeout = planner.expireRuntimeApplications(
+      proposal!.futurePatch!.journeyUpdate!.arrivalTimeMs +
+        phase1Config.checkpointIntervalMs + 1,
+    );
+    expect(timeout[0]).toMatchObject({ terminalStatus: 'RUNTIME_TIMEOUT' });
+    expect(planner.currentPlan.userJourney.waypoints.at(-1)?.locationId).toBe(
+      'forest_clearing',
+    );
+    expect(planner.history).toHaveLength(0);
+  });
+
   it('returns an explicit terminal status when Decision 2 has no safe change', async () => {
     const basePlan = createForestBasePlan(phase1Config);
     const planner = new AdaptivePlannerEngine({
