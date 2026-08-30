@@ -2,7 +2,10 @@ import type { NeuroState } from './neuro-state.js';
 import type { PlannerStatusPayload, SessionStatusPayload } from './protocol.js';
 import type { RuntimeWorldState } from './runtime-world-state.js';
 import type { SceneJourneyPlan } from './scene-journey-plan.js';
-import type { AudioExecutionDiagnostic, AudioPlaybackEvidence } from './audio-playback-evidence.js';
+import type {
+  AudioExecutionDiagnostic,
+  AudioPlaybackEvidence,
+} from './audio-playback-evidence.js';
 
 export const RECORDED_SESSION_SCHEMA_VERSION = '1.4';
 export const LEGACY_RECORDED_SESSION_SCHEMA_VERSION = '1.3';
@@ -78,6 +81,7 @@ export interface AdaptiveTraceRecord {
     | 'plan-applied'
     | 'base-plan'
     | 'patch-lifecycle'
+    | 'adaptation-terminal'
     | 'reflection-outcome';
   source: 'deterministic' | 'live-eeg' | 'mock-llm' | 'openai';
   summary: string;
@@ -97,4 +101,30 @@ export interface RecordedSession {
   decisionEvents?: RecordedDecisionEvent[];
   audioPlaybackEvidence?: AudioPlaybackEvidence[];
   audioExecutionDiagnostics?: AudioExecutionDiagnostic[];
+  adaptiveSummary?: {
+    checkpointCount: number;
+    gateEligibleCount: number;
+    decision1MaintainCount: number;
+    decision1AdaptCount: number;
+    decision2CallCount: number;
+    decision2NoSafeChangeCount: number;
+    materializationFailureCount: number;
+    patchValidationRejectCount: number;
+    patchBudgetRejectCount: number;
+    runtimeRejectCount: number;
+    appliedAdaptationCount: number;
+    sceneTransitionProposedCount: number;
+    sceneTransitionAppliedCount: number;
+  };
+  appliedAudioExposures?: Array<{
+    assetId: string;
+    adaptationId: string;
+    selectedByDecision2: boolean;
+    systemGenerated: boolean | 'scene_transition_locomotion';
+    validated: boolean;
+    runtimeActivated: boolean;
+    audioStartedAtMs?: number;
+    audioFinishedAtMs?: number;
+    effectiveExposureMs?: number;
+  }>;
 }

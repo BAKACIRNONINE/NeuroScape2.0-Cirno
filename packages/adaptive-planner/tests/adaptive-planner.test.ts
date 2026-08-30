@@ -30,9 +30,9 @@ describe('adaptive planner Phase 1', () => {
       if (result) checkpoints.push(result);
     }
     expect(checkpoints[0]?.state.timestampMs).toBe(60_000);
-    expect(checkpoints.slice(0, 5).map((item) => item.state.timestampMs)).toEqual(
-      [60_000, 100_000, 140_000, 180_000, 220_000],
-    );
+    expect(
+      checkpoints.slice(0, 5).map((item) => item.state.timestampMs),
+    ).toEqual([60_000, 80_000, 100_000, 120_000, 140_000]);
     const lastCheckpointMs =
       phase1Config.openingDurationMs +
       Math.floor(
@@ -94,11 +94,13 @@ describe('adaptive planner Phase 1', () => {
     const planner = engine();
     const template = createMockTbrReplay()[0]!;
     const checkpoints = [];
-    for (const timestampMs of [10_000, 30_000, 59_000, 61_000, 79_000, 81_000, 101_000]) {
+    for (const timestampMs of [
+      10_000, 30_000, 59_000, 61_000, 79_000, 81_000, 101_000,
+    ]) {
       const result = await planner.ingest({ ...template, timestampMs });
       if (result) checkpoints.push(result.state.timestampMs);
     }
-    expect(checkpoints).toEqual([61_000, 101_000]);
+    expect(checkpoints).toEqual([61_000, 81_000, 101_000]);
   });
 
   it('does not let a later checkpoint invalidate an in-flight planner transaction', async () => {
@@ -266,4 +268,157 @@ describe('adaptive planner Phase 1', () => {
       expect(planner.acceptedPatches).toHaveLength(committed ? 1 : 0);
     },
   );
+
+  it('commits a scene destination only after runtime arrival acknowledgement', async () => {
+    const basePlan = createForestBasePlan(phase1Config);
+    const planner = new AdaptivePlannerEngine({
+      config: phase1Config,
+      profile: mockCalibrationProfile,
+      initialPlan: initialForestPlan,
+      basePlan,
+      decisionProvider: {
+        decide: async () => ({
+          decision: 'adapt',
+          intent: 'refresh_engagement',
+          salience: 'low',
+          adaptationBasis: 'progression_driven',
+          evidenceSummary: {
+            relation: 'baseline-consistent',
+            trajectory: 'stable',
+            confidence: 'high',
+          },
+          reason: 'test transition',
+          maintainReason: null,
+          constraintsForDecision2: [],
+          shouldAdapt: true,
+          goal: 'refresh-engagement',
+          scope: 'scene-transition',
+          rationale: 'test transition',
+          provider: 'test',
+        }),
+      },
+      planningProvider: {
+        plan: async (_context, _decision, input) => ({
+          patch: { reasoningSummary: 'semantic transition' },
+          semanticOutput: {
+            status: 'CHANGE_PROPOSED',
+            destinationNodeId: 'stream_bank',
+            changes: [
+              {
+                operation: 'INSERT',
+                assetId: 'stream_lakeside_river',
+                targetElementId: null,
+                semanticRole: 'foundation',
+                mixIntent: 'default',
+              },
+            ],
+            selectedAssetIds: ['stream_lakeside_river'],
+            reasonCodes: ['DESTINATION_FOUNDATION_SELECTED'],
+            rationale: 'Establish Stream Bank identity.',
+          },
+          selectedAssetIds: ['stream_lakeside_river'],
+          candidateAssetIds: input.retrievedCandidateIds,
+          promptVersion: input.promptVersion,
+          prompt: input.prompt,
+          outputSchema: input.outputSchema,
+          rationale: 'test',
+          provider: 'test',
+        }),
+      },
+    });
+    let proposal;
+    for (const epoch of createMockTbrReplay()) {
+      const result = await planner.ingest(epoch);
+      if (result?.futurePatch?.journeyUpdate) {
+        proposal = result;
+        break;
+      }
+    }
+    const update = proposal!.futurePatch!.journeyUpdate!;
+    expect(proposal!.patchValidation?.valid).toBe(true);
+    planner.acknowledgeApplication(
+      proposal!.futurePatch!.adaptationId,
+      'PLAN_APPLIED',
+      proposal!.state.timestampMs,
+    );
+    expect(planner.currentPlan.userJourney.waypoints.at(-1)?.locationId).toBe(
+      'forest_clearing',
+    );
+    expect(
+      planner.acknowledgeJourneyArrival(
+        'stream_bank',
+        update.arrivalTimeMs - 1,
+      ),
+    ).toBeUndefined();
+    expect(
+      planner.acknowledgeJourneyArrival('stream_bank', update.arrivalTimeMs)
+        ?.terminalStatus,
+    ).toBe('APPLIED');
+    expect(planner.currentPlan.userJourney.waypoints.at(-1)?.locationId).toBe(
+      'stream_bank',
+    );
+  });
+
+  it('returns an explicit terminal status when Decision 2 has no safe change', async () => {
+    const basePlan = createForestBasePlan(phase1Config);
+    const planner = new AdaptivePlannerEngine({
+      config: phase1Config,
+      profile: mockCalibrationProfile,
+      initialPlan: initialForestPlan,
+      basePlan,
+      decisionProvider: {
+        decide: async () => ({
+          decision: 'adapt',
+          intent: 'gently_reorient_attention',
+          salience: 'low',
+          adaptationBasis: 'eeg_informed',
+          evidenceSummary: {
+            relation: 'tbr-elevated',
+            trajectory: 'declining',
+            confidence: 'high',
+          },
+          reason: 'test',
+          maintainReason: null,
+          constraintsForDecision2: [],
+          shouldAdapt: true,
+          goal: 'gently-reorient',
+          scope: 'within-scene',
+          rationale: 'test',
+          provider: 'test',
+        }),
+      },
+      planningProvider: {
+        plan: async (_context, _decision, input) => ({
+          patch: { reasoningSummary: 'no safe change' },
+          semanticOutput: {
+            status: 'NO_SAFE_CHANGE',
+            destinationNodeId: null,
+            changes: [],
+            selectedAssetIds: [],
+            reasonCodes: ['NO_COHERENT_CHANGE'],
+            rationale: 'maintain',
+          },
+          selectedAssetIds: [],
+          candidateAssetIds: input.retrievedCandidateIds,
+          promptVersion: input.promptVersion,
+          prompt: input.prompt,
+          outputSchema: input.outputSchema,
+          rationale: 'maintain',
+          provider: 'test',
+        }),
+      },
+    });
+    let terminal;
+    for (const epoch of createMockTbrReplay()) {
+      const result = await planner.ingest(epoch);
+      if (result?.terminalOutcome) {
+        terminal = result.terminalOutcome;
+        break;
+      }
+    }
+    expect(terminal).toMatchObject({
+      terminalStatus: 'D2_NO_SAFE_CHANGE',
+      failureStage: 'decision_2',
+    });
+  });
 });

@@ -1,5 +1,11 @@
 import type { AdaptivePlannerConfig } from './config.js';
-import { canonicalPlaybackPolicy } from '@neuroscape/contracts';
+import {
+  audioLibraryById,
+  canonicalPlaybackPolicy,
+  getSceneNode,
+  getSemanticAudioAsset,
+  normalizeLegacyLocationId,
+} from '@neuroscape/contracts';
 import {
   measureBasePlan,
   type BasePlanElement,
@@ -19,6 +25,9 @@ export interface FuturePatchOperation {
   gain?: number;
   replacementAssetId?: string;
   insertedElement?: BasePlanElement;
+  /** Deterministic runtime support, not authored by Decision 2. */
+  systemGenerated?: 'scene_transition_footsteps';
+  destinationFoundationFor?: string;
 }
 export interface AdaptationHypothesis {
   mechanismCode: string;
@@ -43,6 +52,11 @@ export interface FutureScenePatch {
   lessonCode: string | null;
   lessonConfidence: 'high' | 'medium' | 'low' | 'unavailable';
   reasonCodes: string[];
+  journeyUpdate?: {
+    fromNodeId: string;
+    toNodeId: string;
+    arrivalTimeMs: number;
+  };
 }
 export interface ComplexityProjection {
   projectedConcurrentSources: number;
@@ -71,11 +85,16 @@ function applyOperation(
     : -1;
   if (operation.operation === 'KEEP') return;
   if (operation.operation === 'INSERT' && operation.insertedElement) {
-    elements.push(structuredClone(operation.insertedElement));
+    const inserted = structuredClone(operation.insertedElement);
+    if (operation.destinationFoundationFor)
+      inserted.destinationFoundationFor = operation.destinationFoundationFor;
+    elements.push(inserted);
     return;
   }
   if (index < 0) return;
   const target = elements[index]!;
+  if (operation.destinationFoundationFor)
+    target.destinationFoundationFor = operation.destinationFoundationFor;
   if (operation.operation === 'SUPPRESS') {
     elements.splice(index, 1);
     return;
@@ -105,8 +124,14 @@ function applyOperation(
     target.assetFamily = operation.replacementAssetId.replace(/_\d+$/, '');
     (target.payload as { assetId: string }).assetId =
       operation.replacementAssetId;
-    (target.payload as { playback?: import('@neuroscape/contracts').PlaybackPolicy }).playback =
-      canonicalPlaybackPolicy(operation.replacementAssetId, target.gain);
+    (
+      target.payload as {
+        playback?: import('@neuroscape/contracts').PlaybackPolicy;
+      }
+    ).playback = canonicalPlaybackPolicy(
+      operation.replacementAssetId,
+      target.gain,
+    );
   }
 }
 
@@ -132,7 +157,10 @@ export function validateAndProjectPatch(options: {
         options.recentAssetIds,
       ),
     };
-  if (proposedPatch.operations.length > config.maxPatchOperations)
+  if (
+    proposedPatch.operations.filter((operation) => !operation.systemGenerated)
+      .length > config.maxPatchOperations
+  )
     violations.push('too_many_patch_operations');
   for (const op of proposedPatch.operations) {
     if (op.effectiveStartMs < freezeEnd)
@@ -185,6 +213,19 @@ export function validateAndProjectPatch(options: {
       (element.payload as { adaptationId?: string }).adaptationId =
         proposedPatch.adaptationId;
   });
+  if (proposedPatch.journeyUpdate) {
+    const update = proposedPatch.journeyUpdate;
+    const current = normalizeLegacyLocationId(
+      projectedPlan.journey.waypoints.at(-1)?.locationId ?? 'forest_clearing',
+    );
+    if (current !== update.fromNodeId)
+      violations.push('journey_origin_mismatch');
+    else
+      projectedPlan.journey.waypoints.push({
+        locationId: update.toNodeId,
+        arrivalTimeMs: update.arrivalTimeMs,
+      });
+  }
   for (const element of projectedPlan.scheduledElements) {
     if (element.startMs >= basePlan.profile.durationMs)
       violations.push('element_starts_at_or_after_session_end');
@@ -222,7 +263,60 @@ export function validateAndProjectPatch(options: {
   if (projected.projectedSalienceLoad > config.maxSalienceLoad)
     violations.push('salience_budget_exceeded');
   if (projected.cumulativePatchCount > config.maxCumulativePatches)
-    violations.push('cumulative_patch_budget_exceeded');
+    violations.push('PATCH_BUDGET_EXHAUSTED');
+  if (proposedPatch.journeyUpdate) {
+    const destination = getSceneNode(proposedPatch.journeyUpdate.toNodeId);
+    const destinationCoverage = new Set([
+      ...(destination?.audio_coverage.foundation ?? []),
+    ]);
+    const selectedPersistentFoundation = proposedPatch.operations.some(
+      (operation) => {
+        const assetId =
+          operation.insertedElement?.assetId ?? operation.replacementAssetId;
+        if (
+          !assetId ||
+          !destinationCoverage.has(assetId) ||
+          operation.destinationFoundationFor !==
+            proposedPatch.journeyUpdate!.toNodeId
+        )
+          return false;
+        const technical = audioLibraryById.get(assetId);
+        const semantic = getSemanticAudioAsset(assetId);
+        if (
+          technical?.layer !== 'ambient' ||
+          technical.playback_contract?.mode !== 'long_bed' ||
+          !semantic?.semantic_function.includes('foundation')
+        )
+          return false;
+        const element = projectedPlan.scheduledElements.find(
+          (candidate) => candidate.assetId === assetId,
+        );
+        return Boolean(
+          element &&
+          element.startMs <=
+            proposedPatch.journeyUpdate!.arrivalTimeMs +
+              basePlan.transitionPolicy.defaultDurationMs &&
+          element.endMs - proposedPatch.journeyUpdate!.arrivalTimeMs >=
+            config.destinationStabilizationMinMs,
+        );
+      },
+    );
+    if (!selectedPersistentFoundation)
+      violations.push('DESTINATION_ACOUSTIC_FOUNDATION_MISSING');
+  }
+  const projectedCurrentNode = normalizeLegacyLocationId(
+    projectedPlan.journey.waypoints.at(-1)?.locationId ?? 'forest_clearing',
+  );
+  if (projectedCurrentNode !== 'forest_clearing') {
+    const identityPersists = projectedPlan.scheduledElements.some(
+      (element) =>
+        element.destinationFoundationFor === projectedCurrentNode &&
+        element.layer === 'ambient' &&
+        element.endMs - nowMs >= config.destinationStabilizationMinMs,
+    );
+    if (!identityPersists)
+      violations.push('DESTINATION_ACOUSTIC_FOUNDATION_MISSING');
+  }
   return {
     valid: violations.length === 0,
     violations: [...new Set(violations)],
@@ -329,11 +423,10 @@ export function normalizeLegacyPlanPatch(options: {
       });
       const remainingMs = basePlan.profile.durationMs - startMs;
       if (eventPayload.durationMs > remainingMs) {
-        if (eventPayload.playback?.durationPolicy !== 'truncate-at-end')
-          {
-            sessionBoundaryRejected = true;
-            continue;
-          }
+        if (eventPayload.playback?.durationPolicy !== 'truncate-at-end') {
+          sessionBoundaryRejected = true;
+          continue;
+        }
         eventPayload.durationMs = remainingMs;
         eventPayload.trajectory.forEach((waypoint) => {
           waypoint.timestampMs = Math.min(

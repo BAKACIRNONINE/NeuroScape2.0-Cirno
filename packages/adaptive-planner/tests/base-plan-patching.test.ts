@@ -15,12 +15,26 @@ describe('shared Base Plan and future patching', () => {
   const a = createForestBasePlan(phase1Config);
   const patchable = structuredClone(a);
   patchable.scheduledElements.push({
-    elementId: 'base-bird-early', assetId: 'forest_bird_far_01', layer: 'event',
-    startMs: 155_000, endMs: 163_000, gain: 0.24, salience: 0.25,
-    assetFamily: 'forest_bird_far', spatialBehavior: 'stationary_distant',
-    adjustable: true, replaceable: true, suppressible: true,
-    payload: { id: 'base-bird-early', assetId: 'forest_bird_far_01', activationTimeMs: 155_000,
-      durationMs: 8_000, trajectory: [{ locationId: 'forest_entry', timestampMs: 155_000 }], gain: 0.24 },
+    elementId: 'base-bird-early',
+    assetId: 'forest_bird_far_01',
+    layer: 'event',
+    startMs: 155_000,
+    endMs: 163_000,
+    gain: 0.24,
+    salience: 0.25,
+    assetFamily: 'forest_bird_far',
+    spatialBehavior: 'stationary_distant',
+    adjustable: true,
+    replaceable: true,
+    suppressible: true,
+    payload: {
+      id: 'base-bird-early',
+      assetId: 'forest_bird_far_01',
+      activationTimeMs: 155_000,
+      durationMs: 8_000,
+      trajectory: [{ locationId: 'forest_entry', timestampMs: 155_000 }],
+      gain: 0.24,
+    },
   });
   it('provides one complete ambient-only Base Plan', () => {
     expect(measureBasePlan(a)).toMatchObject({
@@ -29,7 +43,9 @@ describe('shared Base Plan and future patching', () => {
       eventCount: 0,
       bodyAnchorCount: 0,
     });
-    expect(a.scheduledElements.map((item) => item.assetId)).toEqual(['forest_ambient_bed_01']);
+    expect(a.scheduledElements.map((item) => item.assetId)).toEqual([
+      'forest_ambient_bed_01',
+    ]);
   });
   it('assigns the same plan to both experimental conditions', () => {
     const assignment = assignSharedBasePlan('P002');
@@ -38,16 +54,25 @@ describe('shared Base Plan and future patching', () => {
   });
   it('hydrates canonical playback for every materialized Base Plan sound', () => {
     const materialized = materializeBasePlan(a);
-    const sounds = [...materialized.soundscape.ambient, ...materialized.soundscape.action, ...materialized.soundscape.event];
+    const sounds = [
+      ...materialized.soundscape.ambient,
+      ...materialized.soundscape.action,
+      ...materialized.soundscape.event,
+    ];
     expect(sounds).toHaveLength(1);
     expect(sounds.every((sound) => sound.playback !== undefined)).toBe(true);
-    expect(materialized.soundscape.ambient[0]?.playback).toEqual({ mode: 'loop', durationPolicy: 'loop-until-end' });
+    expect(materialized.soundscape.ambient[0]?.playback).toEqual({
+      mode: 'loop',
+      durationPolicy: 'loop-until-end',
+    });
     expect(materialized.soundscape.event).toEqual([]);
   });
   it('fails before Runtime when canonical playback cannot be resolved', () => {
     const invalid = structuredClone(a);
     invalid.scheduledElements[0]!.assetId = 'missing-canonical-asset';
-    expect(() => materializeBasePlan(invalid)).toThrow('Unknown canonical audio asset');
+    expect(() => materializeBasePlan(invalid)).toThrow(
+      'Unknown canonical audio asset',
+    );
   });
   const patch = (
     operation: FutureScenePatch['operations'][number],
@@ -156,22 +181,35 @@ describe('shared Base Plan and future patching', () => {
     );
     expect(element?.gain).toBe(0.12);
     expect((element?.payload as { gain: number }).gain).toBe(0.12);
-    expect(materializeBasePlan(result.projectedPlan!).soundscape.event[0]?.playback)
-      .toEqual({ mode: 'once', durationPolicy: 'truncate-at-end' });
+    expect(
+      materializeBasePlan(result.projectedPlan!).soundscape.event[0]?.playback,
+    ).toEqual({ mode: 'once', durationPolicy: 'truncate-at-end' });
   });
 
   it('refreshes playback from the replacement asset contract', () => {
     const result = validateAndProjectPatch({
       basePlan: patchable,
       acceptedPatches: [],
-      proposedPatch: patch({ operation: 'REPLACE', targetElementId: 'base-bird-early', effectiveStartMs: 155_000, transitionMs: 1_000, replacementAssetId: 'forest_soft_owl_far_01' }),
+      proposedPatch: patch({
+        operation: 'REPLACE',
+        targetElementId: 'base-bird-early',
+        effectiveStartMs: 155_000,
+        transitionMs: 1_000,
+        replacementAssetId: 'forest_soft_owl_far_01',
+      }),
       nowMs: 60_000,
       config: phase1Config,
     });
     expect(result.valid).toBe(true);
-    const replaced = materializeBasePlan(result.projectedPlan!).soundscape.event.find((item) => item.id === 'base-bird-early');
+    const replaced = materializeBasePlan(
+      result.projectedPlan!,
+    ).soundscape.event.find((item) => item.id === 'base-bird-early');
     expect(replaced?.assetId).toBe('forest_soft_owl_far_01');
-    expect(replaced?.playback).toMatchObject({ mode: 'repeat', durationPolicy: 'truncate-at-end', repeatCount: 2 });
+    expect(replaced?.playback).toMatchObject({
+      mode: 'repeat',
+      durationPolicy: 'truncate-at-end',
+      repeatCount: 2,
+    });
   });
 
   it('omits schema-required null locationId from inserted global ambient', () => {
@@ -182,7 +220,7 @@ describe('shared Base Plan and future patching', () => {
         upsertAmbient: [
           {
             id: 'adapt-stream',
-            assetId: 'forest_stream_ambient_bed_01',
+            assetId: 'stream_lakeside_river',
             mode: 'global',
             locationId: null,
             gain: 0.58,
@@ -348,8 +386,36 @@ describe('shared Base Plan and future patching', () => {
     );
   });
 
+  it('allows patch seven and explicitly rejects only the configured patch ceiling', () => {
+    const proposed = patch({
+      operation: 'ADJUST',
+      targetElementId: 'base-ambient',
+      effectiveStartMs: 220_250,
+      transitionMs: 1_000,
+      gain: 0.2,
+    });
+    const validateAtCount = (count: number) =>
+      validateAndProjectPatch({
+        basePlan: patchable,
+        acceptedPatches: Array.from({ length: count }, (_, index) => ({
+          ...structuredClone(proposed),
+          adaptationId: `accepted-${index}`,
+        })),
+        proposedPatch: proposed,
+        nowMs: 220_000,
+        config: phase1Config,
+      });
+    expect(phase1Config.maxCumulativePatches).toBe(10);
+    expect(phase1Config.targetAdaptationsMax).toBe(6);
+    expect(validateAtCount(6).valid).toBe(true);
+    expect(validateAtCount(10).violations).toContain('PATCH_BUDGET_EXHAUSTED');
+  });
+
   it('rejects starts beyond session end and consistently truncates allowed late events', () => {
-    const latePatch = (nowMs: number, durationPolicy: 'natural' | 'truncate-at-end') =>
+    const latePatch = (
+      nowMs: number,
+      durationPolicy: 'natural' | 'truncate-at-end',
+    ) =>
       normalizeLegacyPlanPatch({
         adaptationId: `late-${nowMs}`,
         patch: {
@@ -405,8 +471,8 @@ describe('shared Base Plan and future patching', () => {
     expect(inserted.endMs).toBe(600_000);
     expect(payload.activationTimeMs).toBe(598_250);
     expect(payload.durationMs).toBe(1_750);
-    expect(payload.trajectory.every((item) => item.timestampMs <= 600_000)).toBe(
-      true,
-    );
+    expect(
+      payload.trajectory.every((item) => item.timestampMs <= 600_000),
+    ).toBe(true);
   });
 });

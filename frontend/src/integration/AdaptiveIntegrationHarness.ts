@@ -14,6 +14,7 @@ import {
   type AttentionState,
   type CalibrationProfile,
   type TbrEpoch,
+  type AdaptationTerminalOutcome,
 } from '@neuroscape/adaptive-planner';
 import {
   NEUROSCAPE_PROTOCOL_VERSION,
@@ -311,6 +312,10 @@ export class AdaptiveIntegrationHarness {
       const snapshot = this.#runtime.update(
         nextTimestamp - this.#state.timestampMs,
       );
+      for (const terminal of this.#planner?.expireRuntimeApplications(
+        snapshot.timestampMs,
+      ) ?? [])
+        this.traceTerminal(terminal);
       runtimeDiagnostics.recordModule03Update(performance.now() - startedAt);
       this.dispatch('RuntimeWorldState', snapshot.timestampMs, snapshot);
       this.dispatch('SessionStatus', snapshot.timestampMs, {
@@ -373,10 +378,12 @@ export class AdaptiveIntegrationHarness {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (result.futurePatch)
-        planner.acknowledgeApplication(
-          result.futurePatch.adaptationId,
-          'FAILED',
-          result.state.timestampMs,
+        this.traceTerminal(
+          planner.acknowledgeApplication(
+            result.futurePatch.adaptationId,
+            'FAILED',
+            result.state.timestampMs,
+          ),
         );
       this.trace(
         result.state.timestampMs,
@@ -461,6 +468,22 @@ export class AdaptiveIntegrationHarness {
         message: `Decision 1 · ${result.decision.shouldAdapt ? 'adapt' : 'maintain'}: ${result.decision.rationale}`,
       });
     }
+    if (result.terminalOutcome && !result.planning)
+      this.traceTerminal(result.terminalOutcome);
+    if (result.planning && !result.plan) {
+      this.trace(
+        result.state.timestampMs,
+        'decision-2',
+        result.planning.provider.startsWith('openai') ? 'openai' : 'mock-llm',
+        result.planning.rationale,
+        {
+          ...result.planning,
+          timing: result.timing,
+          selectionTrace: result.selectionTrace,
+        },
+      );
+      this.traceTerminal(result.terminalOutcome);
+    }
     if (result.planning && result.plan && this.#runtime) {
       const planAppliedMs =
         result.timing.patchValidationCompleteMs ?? result.state.timestampMs;
@@ -479,20 +502,31 @@ export class AdaptiveIntegrationHarness {
       this.#runtime.applyPlan(result.plan);
       audioEngine.preloadAssets(result.planning.selectedAssetIds);
       if (result.futurePatch) {
-        this.#planner?.acknowledgeApplication(
+        const terminal = this.#planner?.acknowledgeApplication(
           result.futurePatch.adaptationId,
           'PLAN_APPLIED',
           planAppliedMs,
         );
+        this.traceTerminal(terminal);
         this.trace(
           planAppliedMs,
           'patch-lifecycle',
           'deterministic',
-          `${result.futurePatch.adaptationId} applied`,
+          result.futurePatch.journeyUpdate
+            ? `${result.futurePatch.adaptationId} transition started`
+            : `${result.futurePatch.adaptationId} applied`,
           {
             patch: result.futurePatch,
             validation: result.patchValidation,
             lifecycle: result.lifecycle,
+            ...(result.futurePatch.journeyUpdate
+              ? {
+                  transitionState: 'TRANSITION_STARTED',
+                  originNodeId: result.futurePatch.journeyUpdate.fromNodeId,
+                  destinationNodeId: result.futurePatch.journeyUpdate.toNodeId,
+                  arrivalTimeMs: result.futurePatch.journeyUpdate.arrivalTimeMs,
+                }
+              : {}),
           },
         );
       }
@@ -548,7 +582,10 @@ export class AdaptiveIntegrationHarness {
           })),
         ].filter((item) => item.adaptationId === adaptationId)
       : [];
-    sounds.forEach((sound) =>
+    sounds.forEach((sound) => {
+      const operation = result.futurePatch?.operations.find(
+        (item) => item.insertedElement?.elementId === sound.id,
+      );
       sessionRecorder.appendAudioPlaybackEvidence({
         adaptationId,
         elementId: sound.id,
@@ -566,8 +603,17 @@ export class AdaptiveIntegrationHarness {
         retrievedCandidateIds: result.selectionTrace?.retrievedCandidateIds,
         recentlyUsedAssetIds: result.selectionTrace?.recentlyUsedAssetIds,
         selectedAssetIds: result.planning?.selectedAssetIds,
-      }),
-    );
+        selectedByDecision2:
+          result.planning?.semanticOutput?.selectedAssetIds.includes(
+            sound.assetId,
+          ) ?? false,
+        systemGenerated:
+          operation?.systemGenerated === 'scene_transition_footsteps'
+            ? 'scene_transition_locomotion'
+            : false,
+        validated: result.patchValidation?.valid ?? false,
+      });
+    });
   }
 
   private handlePlaybackEvidence(evidence: AudioPlaybackEvidence): void {
@@ -673,11 +719,48 @@ export class AdaptiveIntegrationHarness {
       data: structuredClone(data) as Record<string, unknown>,
     });
   }
+  private traceTerminal(outcome?: AdaptationTerminalOutcome): void {
+    if (!outcome) return;
+    this.trace(
+      outcome.checkpointTimestampMs,
+      'adaptation-terminal',
+      'deterministic',
+      `${outcome.adaptationId}: ${outcome.terminalStatus}`,
+      outcome,
+    );
+  }
   private createRuntime(): RuntimeController {
     const graph = new SceneGraph(forestSceneGraph),
       mapper = new SemanticLocationMapper(graph),
       events = new RuntimeEventBus(),
       transitions = new TransitionController(events);
+    events.subscribe((event) => {
+      if (event.type !== 'SemanticLocationChanged') return;
+      const terminal = this.#planner?.acknowledgeJourneyArrival(
+        event.locationId,
+        event.timestampMs,
+      );
+      this.traceTerminal(terminal);
+      this.trace(
+        event.timestampMs,
+        'patch-lifecycle',
+        'deterministic',
+        `Runtime arrived at ${event.locationId}`,
+        {
+          transitionState: 'COMMITTED',
+          transitionStateHistory: [
+            'PLANNED',
+            'TRANSITION_STARTED',
+            'ARRIVED',
+            'COMMITTED',
+          ],
+          originNodeId: event.previousLocationId,
+          destinationNodeId: event.locationId,
+          arrivalTimeMs: event.timestampMs,
+          runtimeSemanticLocation: event.locationId,
+        },
+      );
+    });
     return new RuntimeController({
       validator: new PlanValidator(graph),
       stateBuilder: new RuntimeWorldStateBuilder(),

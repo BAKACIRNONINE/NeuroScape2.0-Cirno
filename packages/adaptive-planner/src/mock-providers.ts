@@ -42,7 +42,7 @@ export interface SoundAssetKnowledge {
 
 export const phase1SoundKnowledge: readonly SoundAssetKnowledge[] =
   Object.freeze(
-    audioLibrary.map((asset) => ({
+    audioLibrary.filter((asset) => asset.planner_eligible !== false).map((asset) => ({
       assetId: asset.asset_id,
       family: asset.asset_id.replace(/_\d+$/, ''),
       label: asset.label,

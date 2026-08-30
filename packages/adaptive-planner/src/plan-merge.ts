@@ -20,7 +20,8 @@ function normalizeAmbient(
 ): SceneJourneyPlan['soundscape']['ambient'] {
   return items.map((item) => {
     if (item.mode !== 'global') return item;
-    const { locationId: _locationId, ...globalItem } = item;
+    const globalItem = { ...item };
+    delete globalItem.locationId;
     return globalItem;
   });
 }

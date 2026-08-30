@@ -1,0 +1,11 @@
+{
+  "participant_id": "P001",
+  "session_id": "mock-preloaded-001",
+  "created_at": "2026-08-29T00:00:00Z",
+  "completed_at": "2026-08-29T00:00:10Z",
+  "local_ipv4": "127.0.0.1",
+  "osc_port": 5000,
+  "sampling_rate_hz": 256,
+  "researcher_quality_override": false,
+  "feature_version": "raw_welch_frontal_log_tbr_guided_baseline_protocol_v5"
+}

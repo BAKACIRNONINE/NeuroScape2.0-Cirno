@@ -316,6 +316,13 @@ export function App() {
     spatialDiagnosticHarness.start();
     setPage('session');
   };
+  // Retained developer entry points while the study UI exposes only the
+  // calibrated adaptive/non-adaptive flows.
+  void start;
+  void startDemo;
+  void startAdaptive;
+  void startLongDemo;
+  void startSpatialDiagnostic;
   const startNonAdaptive = async (profile: Profile, replayFile?: File) => {
     const participantId = profile.participant_id;
     const assignment = assignSharedBasePlan(participantId);

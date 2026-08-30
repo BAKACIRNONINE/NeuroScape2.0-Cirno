@@ -10,4 +10,5 @@ export * from './plan-merge.js';
 export * from './types.js';
 export * from './base-plan.js';
 export * from './patching.js';
+export * from './semantic-materializer.js';
 export * from './reflection.js';

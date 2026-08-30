@@ -7,7 +7,7 @@ import type {
 import { canonicalPlaybackPolicy } from '@neuroscape/contracts';
 import type { AdaptivePlannerConfig } from './config.js';
 
-export const BASE_PLAN_VERSION = 'base_plan_v4';
+export const BASE_PLAN_VERSION = 'base_plan_v5_constrained_journey';
 export const ASSIGNMENT_RULE_VERSION = 'shared_base_v1';
 
 export type BasePlanPhaseId =
@@ -51,6 +51,8 @@ export interface BasePlanElement {
   replaceable: boolean;
   suppressible: boolean;
   payload: AmbientPlanItem | ActionPlanItem | EventPlanItem;
+  /** Persistent acoustic identity established for an arrived graph node. */
+  destinationFoundationFor?: string;
 }
 
 export interface BaseScenePlan {
@@ -157,8 +159,8 @@ export function createForestBasePlan(
     profile: profile(config),
     phases: phases(),
     journey: {
-      goal: 'Follow a restrained ten-minute forest meditation arc',
-      waypoints: [{ locationId: 'clearing', arrivalTimeMs: 0 }],
+      goal: 'Begin from a stable forest clearing and allow restrained adaptive journey progression',
+      waypoints: [{ locationId: 'forest_clearing', arrivalTimeMs: 0 }],
     },
     transitionPolicy: {
       defaultDurationMs: 5_000,

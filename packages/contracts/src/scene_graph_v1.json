@@ -1,0 +1,300 @@
+{
+  "schema_version": "semantic_scene_graph_v1",
+  "status": "design_locked_for_planner_migration",
+  "purpose": "Constrain feasible spatial progression while leaving destination choice and acoustic realization to Decision 2 semantic reasoning.",
+  "planner_principles": [
+    "All participants begin at forest_clearing.",
+    "Neighbors constrain feasible destinations; they do not encode which EEG state or adaptation intent should choose a destination.",
+    "Node descriptions characterize places, not policies.",
+    "audio_coverage lists currently available building blocks and is not a fixed recipe.",
+    "A scene is a semantic composition of reusable assets, not a one-to-one audio package.",
+    "Journey-level adaptation emerges from repeated local adaptations and adjacent-node progressions; no separate Route Planner LLM call is required.",
+    "Progression pressure may increase the desirability of spatial evolution but must not select a destination deterministically."
+  ],
+  "start_node_id": "forest_clearing",
+  "recommended_major_transitions_per_10min_session": {
+    "min": 0,
+    "max": 2,
+    "note": "Major transitions should remain sparse; local acoustic evolution supplies most moment-to-moment richness."
+  },
+  "nodes": [
+    {
+      "id": "forest_clearing",
+      "label": "Forest Clearing",
+      "family": "forest",
+      "graph_role": "start_hub",
+      "description": "An open but sheltered clearing inside the forest: calm, protected, stable, and spatially wide without feeling exposed.",
+      "acoustic_character": [
+        "stable forest foundation",
+        "gentle enclosure",
+        "wide natural ambience",
+        "sparse distant life"
+      ],
+      "neighbors": ["dense_forest", "stream_bank", "forest_edge"],
+      "coverage_status": "strong",
+      "audio_coverage": {
+        "foundation": ["forest_ambient_bed_01"],
+        "supporting_ambient": [
+          "forest_wind_leaves_01",
+          "forest_ambient_bed_02"
+        ],
+        "events": [
+          "forest_bird_far_01",
+          "forest_bird_far_02",
+          "forest_leaf_rustle_mid_01"
+        ],
+        "actions": ["body_slow_breath_01"]
+      }
+    },
+    {
+      "id": "dense_forest",
+      "label": "Dense Forest",
+      "family": "forest",
+      "graph_role": "endpoint",
+      "description": "A more enclosed forest interior with closer vegetation, reduced horizon, and richer near-to-mid environmental texture.",
+      "acoustic_character": [
+        "enclosed",
+        "close vegetation",
+        "reduced openness",
+        "fine local life texture"
+      ],
+      "neighbors": ["forest_clearing"],
+      "coverage_status": "strong",
+      "audio_coverage": {
+        "foundation": ["forest_ambient_bed_02", "forest_ambient_bed_01"],
+        "supporting_ambient": ["forest_wind_leaves_01"],
+        "events": [
+          "forest_leaf_rustle_mid_01",
+          "forest_soft_owl_far_01",
+          "forest_small_animal_rustle_far_01",
+          "forest_insect_chirp_far_01"
+        ],
+        "actions": ["body_slow_breath_01"]
+      }
+    },
+    {
+      "id": "stream_bank",
+      "label": "Stream Bank",
+      "family": "freshwater_forest",
+      "graph_role": "water_hub",
+      "description": "A forest location where freshwater becomes a clear directional presence while the surrounding forest remains perceptually present.",
+      "acoustic_character": [
+        "forest-water coexistence",
+        "directional freshwater",
+        "grounded and continuous",
+        "moderate enclosure"
+      ],
+      "neighbors": ["forest_clearing", "waterfall_vicinity", "lakeside_river"],
+      "coverage_status": "strong",
+      "audio_coverage": {
+        "foundation": [
+          "forest_stream_ambient_bed_01",
+          "forest_ambient_bed_01",
+          "stream_lakeside_river"
+        ],
+        "supporting_ambient": [],
+        "events": ["forest_water_drop_far_01", "forest_bird_far_01"],
+        "actions": ["forest_body_slow_creek_steps_01", "body_slow_breath_01"]
+      }
+    },
+    {
+      "id": "waterfall_vicinity",
+      "label": "Waterfall Vicinity",
+      "family": "freshwater_forest",
+      "graph_role": "endpoint",
+      "description": "A forest-water location organized around a clearly localized waterfall landmark, with stronger physical water presence than the stream bank.",
+      "acoustic_character": [
+        "localized waterfall landmark",
+        "stronger freshwater presence",
+        "immersive physical depth",
+        "forest receded but not absent"
+      ],
+      "neighbors": ["stream_bank"],
+      "coverage_status": "adequate",
+      "audio_coverage": {
+        "foundation": ["forest_stream_ambient_bed_01"],
+        "supporting_ambient": ["forest_ambient_bed_01"],
+        "events": ["forest_water_drop_far_01"],
+        "actions": ["forest_body_slow_creek_steps_01", "body_slow_breath_01"]
+      }
+    },
+    {
+      "id": "lakeside_river",
+      "label": "Lakeside River",
+      "family": "freshwater_open",
+      "graph_role": "endpoint",
+      "description": "A wider and calmer freshwater edge where the forest opens toward a smooth, steady river or lakeside flow.",
+      "acoustic_character": [
+        "wide freshwater field",
+        "smooth continuous flow",
+        "open horizon",
+        "low temporal urgency"
+      ],
+      "neighbors": ["stream_bank"],
+      "coverage_status": "adequate",
+      "audio_coverage": {
+        "foundation": ["stream_lakeside_river"],
+        "supporting_ambient": [
+          "forest_ambient_bed_01",
+          "forest_wind_leaves_01"
+        ],
+        "events": ["forest_bird_far_01", "forest_bird_far_02"],
+        "actions": ["forest_body_slow_creek_steps_01", "body_slow_breath_01"]
+      }
+    },
+    {
+      "id": "forest_edge",
+      "label": "Forest Edge",
+      "family": "forest_transition",
+      "graph_role": "cross_scene_hub",
+      "description": "A threshold at the edge of the forest where enclosure decreases and cues from a more open outside environment can begin to enter.",
+      "acoustic_character": [
+        "opening spatial field",
+        "directional wind",
+        "forest receding",
+        "transitional threshold"
+      ],
+      "neighbors": ["forest_clearing", "city_park", "beach_shore"],
+      "coverage_status": "compositional",
+      "audio_coverage": {
+        "foundation": ["forest_ambient_bed_01"],
+        "supporting_ambient": ["forest_wind_leaves_01"],
+        "events": ["forest_bird_far_01", "forest_bird_far_02"],
+        "actions": ["forest_grass_footstep_01", "body_slow_breath_01"]
+      }
+    },
+    {
+      "id": "city_park",
+      "label": "City Park",
+      "family": "urban_nature",
+      "graph_role": "endpoint",
+      "description": "A lightly urban park environment where natural presence coexists with distant everyday street activity rather than a dense or noisy city center.",
+      "acoustic_character": [
+        "light urban background",
+        "passing cars",
+        "everyday human-scale life",
+        "stable park-like openness"
+      ],
+      "neighbors": ["forest_edge"],
+      "coverage_status": "minimum_viable",
+      "audio_coverage": {
+        "foundation": ["citypark_light_street_ambience"],
+        "supporting_ambient": [],
+        "events": ["citypark_dog"],
+        "actions": ["citypark_walk_on_the_street", "body_slow_breath_01"]
+      }
+    },
+    {
+      "id": "beach_shore",
+      "label": "Beach Shore",
+      "family": "coastal",
+      "graph_role": "endpoint",
+      "description": "An open shoreline with broad horizontal space, rhythmic wave motion, coastal wind, and sparse distant signs of life.",
+      "acoustic_character": [
+        "open and expansive",
+        "rhythmic water",
+        "wide coastal wind",
+        "distant horizon and wildlife"
+      ],
+      "neighbors": ["forest_edge"],
+      "coverage_status": "strong",
+      "audio_coverage": {
+        "foundation": ["ocean_waves", "ocean_waves_soft_01"],
+        "supporting_ambient": [
+          "ocean_sea_breeze_01",
+          "ocean_shoreline_wash_01"
+        ],
+        "events": [
+          "ocean_seagull_far_01",
+          "ocean_shorebird_far_01",
+          "ocean_pebble_wash_mid_01",
+          "child_play_far_01",
+          "ocean_child_sand_play_far_01",
+          "boat_horn_far_01"
+        ],
+        "actions": ["ocean_wet_sand_footstep_01", "body_slow_breath_01"]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "clearing_dense_forest",
+      "between": ["forest_clearing", "dense_forest"],
+      "bidirectional": true,
+      "semantic_transition": "The forest becomes more enclosed: openness and wind recede while closer leaf and undergrowth texture becomes more perceptible.",
+      "available_transition_cues": [
+        "forest_wind_leaves_01",
+        "forest_leaf_rustle_mid_01",
+        "forest_grass_footstep_01"
+      ]
+    },
+    {
+      "id": "clearing_stream_bank",
+      "between": ["forest_clearing", "stream_bank"],
+      "bidirectional": true,
+      "semantic_transition": "Freshwater first appears at a distance and gradually gains directional presence while the forest bed remains continuous.",
+      "available_transition_cues": [
+        "forest_stream_ambient_bed_01",
+        "forest_water_drop_far_01",
+        "forest_body_slow_creek_steps_01",
+        "forest_grass_footstep_01"
+      ]
+    },
+    {
+      "id": "stream_bank_waterfall",
+      "between": ["stream_bank", "waterfall_vicinity"],
+      "bidirectional": true,
+      "semantic_transition": "The water field becomes more localized and physically prominent as the waterfall landmark moves from distant cue to defining spatial feature.",
+      "available_transition_cues": [
+        "forest_water_drop_far_01",
+        "forest_stream_ambient_bed_01",
+        "forest_body_slow_creek_steps_01"
+      ]
+    },
+    {
+      "id": "stream_bank_lakeside_river",
+      "between": ["stream_bank", "lakeside_river"],
+      "bidirectional": true,
+      "semantic_transition": "The freshwater field widens and smooths out; the forest becomes less dominant as the acoustic horizon opens toward a broad steady river.",
+      "available_transition_cues": [
+        "stream_lakeside_river",
+        "forest_stream_ambient_bed_01",
+        "forest_wind_leaves_01"
+      ]
+    },
+    {
+      "id": "clearing_forest_edge",
+      "between": ["forest_clearing", "forest_edge"],
+      "bidirectional": true,
+      "semantic_transition": "The forest gradually opens: enclosure decreases, wind becomes broader and more directional, and movement cues may suggest approaching a boundary.",
+      "available_transition_cues": [
+        "forest_wind_leaves_01",
+        "forest_grass_footstep_01",
+        "forest_bird_far_01"
+      ]
+    },
+    {
+      "id": "forest_edge_city_park",
+      "between": ["forest_edge", "city_park"],
+      "bidirectional": true,
+      "semantic_transition": "Distant light traffic gradually enters beyond the thinning forest; walking texture can mark the shift from soft natural ground toward a paved urban edge.",
+      "available_transition_cues": [
+        "citypark_light_street_ambience",
+        "citypark_walk_on_the_street",
+        "citypark_dog"
+      ]
+    },
+    {
+      "id": "forest_edge_beach",
+      "between": ["forest_edge", "beach_shore"],
+      "bidirectional": true,
+      "semantic_transition": "The field opens through coastal wind before waves become explicit; forest ambience recedes while the shoreline gains width and rhythmic water presence.",
+      "available_transition_cues": [
+        "ocean_sea_breeze_01",
+        "ocean_waves",
+        "ocean_waves_soft_01",
+        "ocean_wet_sand_footstep_01"
+      ]
+    }
+  ]
+}

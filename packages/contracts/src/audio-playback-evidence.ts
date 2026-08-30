@@ -32,6 +32,9 @@ export interface AudioPlaybackEvidence {
   retrievedCandidateIds?: string[];
   recentlyUsedAssetIds?: string[];
   selectedAssetIds?: string[];
+  selectedByDecision2?: boolean;
+  systemGenerated?: boolean | 'scene_transition_locomotion';
+  validated?: boolean;
 }
 
 /** General execution evidence for every source; adaptationId is deliberately optional. */

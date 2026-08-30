@@ -27,7 +27,13 @@ const context = (): DecisionContext => ({
     ...new AttentionInterpreter(mockCalibrationProfile, {
       ...phase1Config,
       minimumValidEpochs: 1,
-    }).ingest({ timestampMs: 180_000, logTbr: 1.3, valid: true, qualityScore: 0.95, artifactFlags: [] }),
+    }).ingest({
+      timestampMs: 180_000,
+      logTbr: 1.3,
+      valid: true,
+      qualityScore: 0.95,
+      artifactFlags: [],
+    }),
     baselineRelation: 'tbr-elevated',
     trajectory: 'declining',
   },
@@ -101,12 +107,15 @@ describe('OpenAI planner providers', () => {
     expect(String(requestBody?.prompt)).toContain(
       'adaptationProgress is a soft session-level target',
     );
+    expect(String(requestBody?.prompt)).toContain(
+      'Do not prescribe an audio layer, asset family',
+    );
     expect(result.provider).toBe('openai-responses');
     expect(result.model).toBe('gpt-5.6-2026-08-01');
     expect(result.usage?.totalTokens).toBe(120);
   });
 
-  it('sends Decision 2 candidates/schema and normalizes the structured patch', async () => {
+  it('sends compact Decision 2 candidates/schema and returns semantic output', async () => {
     const value = context();
     const decision: AdaptationDecision = {
       decision: 'adapt',
@@ -127,71 +136,31 @@ describe('OpenAI planner providers', () => {
       provider: 'test',
     };
     const input = prepareDecision2Input(value, decision, phase1Config);
-    expect(input.prompt).toContain(
-      'rank compatible candidates by authored quality and system suitability',
-    );
-    expect(input.prompt).toContain('"active":false');
-    value.profile = { ...value.profile, qualityStatus: 'fail' };
-    value.state.measurementConfidence = 'low';
-    expect(prepareDecision2Input(value, decision, phase1Config).prompt).toContain(
-      '"active":true',
-    );
-    const candidate = input.candidates[0]!;
+    expect(input.prompt).toContain('Semantic Spatial Planning');
+    expect(input.prompt).not.toContain('selectionWeight');
+    const candidate = input.semanticCandidates![0]!;
     const provider = new OpenAIPlanningProvider({
       fetchImpl: async () =>
         jsonResponse({
-          status: 'PATCH_PROPOSED',
-          intent: decision.intent,
-          patchOperations: [
+          status: 'CHANGE_PROPOSED',
+          destinationNodeId: null,
+          changes: [
             {
               operation: 'INSERT',
+              assetId: candidate.assetId,
               targetElementId: null,
-              effectiveStartMs: 182_000,
-              transitionMs: 2_000,
-              replacementAssetId: candidate.assetId,
+              semanticRole: 'body_anchor',
+              mixIntent: 'default',
             },
           ],
-          preservedElementIds: [],
-          adaptationHypothesis: {
-            mechanismCode: 'GENTLE_REORIENTATION',
-            expectedResponseCode: 'GENTLE_REORIENTATION',
-            failureSignalCode: 'CONTINUED_DECLINE_WITH_VALID_SIGNAL',
-          },
-          reflectionUsed: {
-            priorAdaptationIds: [],
-            lessonCode: null,
-            lessonConfidence: 'unavailable',
-          },
           reasonCodes: ['MINIMAL_SUFFICIENT_PATCH'],
-          patch: {
-            reasoningSummary: 'Use one compatible event.',
-            journey: null,
-            upsertAmbient: [],
-            upsertAction: [],
-            upsertEvent: [
-              {
-                id: 'event-180000',
-                assetId: candidate.assetId,
-                activationTimeMs: 182_000,
-                durationMs:
-                  (candidate.defaultMotion.durationSec ??
-                    candidate.autoDeleteAfterSec ??
-                    6) * 1_000,
-                trajectory: [{ locationId: 'clearing', timestampMs: 182_000 }],
-                gain: candidate.recommendedVolume,
-              },
-            ],
-            removeIds: [],
-            transitionDurationMs: 2_000,
-          },
           selectedAssetIds: [candidate.assetId],
           rationale: 'Selected from the compatible forest event candidates.',
         }),
     });
     const result = await provider.plan(value, decision, input);
-    expect(result.patch.journey).toBeUndefined();
-    expect(result.patch.upsertAmbient).toBeUndefined();
-    expect(result.patch.upsertEvent?.[0]?.assetId).toBe(candidate.assetId);
+    expect(result.semanticOutput?.changes[0]?.assetId).toBe(candidate.assetId);
+    expect(result.patch.reasoningSummary).toContain('Selected from');
     expect(result.outputSchema).toEqual(input.outputSchema);
   });
 

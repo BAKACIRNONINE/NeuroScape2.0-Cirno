@@ -72,7 +72,7 @@ describe('integration failure boundaries', () => {
     expect(
       manifest.find((item) => item.assetId === 'ambient.waterfall')?.url,
     ).toBe(
-      'https://assets.example/neuroscape/audio/ocean_beach/ambient/ocean_waves_soft_01.wav',
+      'https://assets.example/neuroscape/audio/ocean_beach/ambient/ocean_waves.wav',
     );
     expect(
       manifest.find((item) => item.assetId === 'forest_bird_far_02')?.url,

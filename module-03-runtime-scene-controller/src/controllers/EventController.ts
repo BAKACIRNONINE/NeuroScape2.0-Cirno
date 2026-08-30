@@ -298,7 +298,7 @@ export class EventController {
     }));
   }
 
-  private fadeDuration(object: EventRuntimeObject): number {
+  private fadeDuration(_object: EventRuntimeObject): number {
     return this.#policy.defaultDurationMs;
   }
 }

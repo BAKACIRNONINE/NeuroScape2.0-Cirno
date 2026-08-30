@@ -17,7 +17,6 @@ import {
   smoothstepDerivative,
   subtractVector,
   vectorLength,
-  vectorsEqual,
 } from '../core/math.js';
 
 interface ResolvedWaypoint {
@@ -42,9 +41,14 @@ export class JourneyController {
 
   initialize(plan: SceneJourneyPlan, timestampMs = 0): void {
     this.#timestampMs = timestampMs;
-    this.#waypoints = resolveInitialWaypoints(plan, timestampMs, this.locationMapper);
+    this.#waypoints = resolveInitialWaypoints(
+      plan,
+      timestampMs,
+      this.locationMapper,
+    );
     const first = this.#waypoints[0];
-    if (!first) throw new Error('JourneyController requires at least one waypoint.');
+    if (!first)
+      throw new Error('JourneyController requires at least one waypoint.');
     this.#listener = {
       worldPosition: [...first.position],
       orientation: [0, 0, 0, 1],
@@ -53,7 +57,11 @@ export class JourneyController {
     };
     this.#lastReachedIndex = 0;
     this.#currentSegmentIndex = this.#waypoints.length > 1 ? 0 : -1;
-    this.events.emit({ type: 'JourneyStarted', timestampMs, planId: plan.planId });
+    this.events.emit({
+      type: 'JourneyStarted',
+      timestampMs,
+      planId: plan.planId,
+    });
   }
 
   replacePlan(plan: SceneJourneyPlan): void {
@@ -62,32 +70,47 @@ export class JourneyController {
       locationId: waypoint.locationId,
       position: this.locationMapper.resolve(waypoint.locationId),
       pauseDurationMs: waypoint.pauseDurationMs ?? 0,
+      requestedArrivalTimeMs: waypoint.arrivalTimeMs,
     }));
-    const first = planned[0];
-    const needsCurrentAnchor =
-      !first ||
-      first.locationId !== listener.semanticLocation ||
-      !vectorsEqual(first.position, listener.worldPosition);
-    const anchors = needsCurrentAnchor
-      ? [
-          {
-            locationId: listener.semanticLocation,
-            position: [...listener.worldPosition] as Vector3,
-            pauseDurationMs: 0,
-          },
-          ...planned,
-        ]
-      : planned;
-    const segmentDurationMs =
-      anchors.length > 1 ? (plan.planningHorizonSec * 1000) / (anchors.length - 1) : 0;
-    this.#waypoints = anchors.map((waypoint, index) => ({
-      ...waypoint,
-      arrivalTimeMs: this.#timestampMs + index * segmentDurationMs,
-    }));
+    const future = planned.filter(
+      (waypoint) =>
+        waypoint.locationId !== listener.semanticLocation &&
+        (waypoint.requestedArrivalTimeMs === undefined ||
+          waypoint.requestedArrivalTimeMs > this.#timestampMs),
+    );
+    const fallbackSegmentDurationMs =
+      future.length > 0 ? (plan.planningHorizonSec * 1_000) / future.length : 0;
+    let previousArrivalMs = this.#timestampMs;
+    this.#waypoints = [
+      {
+        locationId: listener.semanticLocation,
+        position: [...listener.worldPosition] as Vector3,
+        pauseDurationMs: 0,
+        arrivalTimeMs: this.#timestampMs,
+      },
+      ...future.map((waypoint, index) => {
+        const arrivalTimeMs = Math.max(
+          previousArrivalMs + 1,
+          waypoint.requestedArrivalTimeMs ??
+            this.#timestampMs + (index + 1) * fallbackSegmentDurationMs,
+        );
+        previousArrivalMs = arrivalTimeMs;
+        return {
+          locationId: waypoint.locationId,
+          position: waypoint.position,
+          pauseDurationMs: waypoint.pauseDurationMs,
+          arrivalTimeMs,
+        };
+      }),
+    ];
     this.#lastReachedIndex = 0;
-    this.#currentSegmentIndex = anchors.length > 1 ? 0 : -1;
+    this.#currentSegmentIndex = this.#waypoints.length > 1 ? 0 : -1;
     this.#listener = { ...listener, velocity: [0, 0, 0] };
-    this.events.emit({ type: 'JourneyStarted', timestampMs: this.#timestampMs, planId: plan.planId });
+    this.events.emit({
+      type: 'JourneyStarted',
+      timestampMs: this.#timestampMs,
+      planId: plan.planId,
+    });
   }
 
   update(deltaTimeMs: number): ListenerState {
@@ -99,14 +122,22 @@ export class JourneyController {
     let orientation = listener.orientation;
     if (vectorLength(sample.velocity) > EPSILON && deltaTimeMs > 0) {
       const targetOrientation = lookRotation(normalizeVector(sample.velocity));
-      const response = 1 - Math.exp(-this.#orientationResponsePerSecond * (deltaTimeMs / 1000));
-      orientation = slerpQuaternion(listener.orientation, targetOrientation, response);
+      const response =
+        1 -
+        Math.exp(-this.#orientationResponsePerSecond * (deltaTimeMs / 1000));
+      orientation = slerpQuaternion(
+        listener.orientation,
+        targetOrientation,
+        response,
+      );
     }
     this.#listener = {
       worldPosition: sample.position,
       velocity: sample.velocity,
       orientation,
-      semanticLocation: this.#waypoints[this.#lastReachedIndex]?.locationId ?? listener.semanticLocation,
+      semanticLocation:
+        this.#waypoints[this.#lastReachedIndex]?.locationId ??
+        listener.semanticLocation,
     };
     this.#currentSegmentIndex = sample.segmentIndex;
     return this.getListenerState();
@@ -152,28 +183,45 @@ export class JourneyController {
       const to = this.#waypoints[index + 1]!;
       const startTimeMs = from.arrivalTimeMs + from.pauseDurationMs;
       if (timestampMs < startTimeMs) {
-        return { position: [...from.position], velocity: [0, 0, 0], segmentIndex: index };
+        return {
+          position: [...from.position],
+          velocity: [0, 0, 0],
+          segmentIndex: index,
+        };
       }
       if (timestampMs <= to.arrivalTimeMs) {
         const durationMs = Math.max(1, to.arrivalTimeMs - startTimeMs);
-        const progress = Math.max(0, Math.min(1, (timestampMs - startTimeMs) / durationMs));
+        const progress = Math.max(
+          0,
+          Math.min(1, (timestampMs - startTimeMs) / durationMs),
+        );
         const delta = subtractVector(to.position, from.position);
-        const velocityScale = (smoothstepDerivative(progress) / durationMs) * 1000;
+        const velocityScale =
+          (smoothstepDerivative(progress) / durationMs) * 1000;
         return {
-          position: lerpVector(from.position, to.position, smoothstep(progress)),
+          position: lerpVector(
+            from.position,
+            to.position,
+            smoothstep(progress),
+          ),
           velocity: scaleVector(delta, velocityScale),
           segmentIndex: index,
         };
       }
     }
     const last = this.#waypoints[this.#waypoints.length - 1]!;
-    return { position: [...last.position], velocity: [0, 0, 0], segmentIndex: -1 };
+    return {
+      position: [...last.position],
+      velocity: [0, 0, 0],
+      segmentIndex: -1,
+    };
   }
 
   private emitReachedWaypoints(): void {
     while (
       this.#lastReachedIndex + 1 < this.#waypoints.length &&
-      this.#waypoints[this.#lastReachedIndex + 1]!.arrivalTimeMs <= this.#timestampMs
+      this.#waypoints[this.#lastReachedIndex + 1]!.arrivalTimeMs <=
+        this.#timestampMs
     ) {
       const previous = this.#waypoints[this.#lastReachedIndex]!;
       this.#lastReachedIndex += 1;
@@ -196,7 +244,8 @@ export class JourneyController {
   }
 
   private requireListener(): ListenerState {
-    if (!this.#listener) throw new Error('JourneyController is not initialized.');
+    if (!this.#listener)
+      throw new Error('JourneyController is not initialized.');
     return this.#listener;
   }
 }
@@ -207,12 +256,14 @@ function resolveInitialWaypoints(
   mapper: SemanticLocationMapper,
 ): ResolvedWaypoint[] {
   const count = plan.userJourney.waypoints.length;
-  const defaultSegmentDurationMs = count > 1 ? (plan.planningHorizonSec * 1000) / (count - 1) : 0;
+  const defaultSegmentDurationMs =
+    count > 1 ? (plan.planningHorizonSec * 1000) / (count - 1) : 0;
   let previousArrival = startTimeMs;
   let previousPause = 0;
   return plan.userJourney.waypoints.map((waypoint, index) => {
     const requestedArrival = waypoint.arrivalTimeMs;
-    const earliestArrival = index === 0 ? startTimeMs : previousArrival + previousPause + 1;
+    const earliestArrival =
+      index === 0 ? startTimeMs : previousArrival + previousPause + 1;
     const derivedArrival = startTimeMs + index * defaultSegmentDurationMs;
     const arrivalTimeMs =
       index === 0

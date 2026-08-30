@@ -2,7 +2,7 @@ import libraryData from './audio_library.json' with { type: 'json' };
 import type { PlaybackPolicy } from './scene-journey-plan.js';
 
 export type AudioLibraryLayer = 'ambient' | 'event' | 'action';
-export type AudioLibraryScene = 'forest' | 'ocean_beach';
+export type AudioLibraryScene = 'forest' | 'ocean_beach' | 'citypark' | 'common' | 'control';
 export type AudioDistance = 'near' | 'middle' | 'far' | 'wide';
 export type AudioMotionType =
   'none' | 'drift' | 'overhead_pass' | 'local_random' | 'approach_recede';
@@ -84,6 +84,10 @@ export interface AudioLibraryAsset {
   gain_profile?: AudioGainProfile;
   playback_contract?: AudioPlaybackContract;
   narrative_compatibility?: AudioNarrativeCompatibility;
+  /** False for session-only files and entries awaiting authored planner metadata. */
+  planner_eligible?: boolean;
+  /** Placeholder entries remain loadable but must be reviewed before planner use. */
+  metadata_status?: 'tbd' | 'authored';
 }
 
 /**

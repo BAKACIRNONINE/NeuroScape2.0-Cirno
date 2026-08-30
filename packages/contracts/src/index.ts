@@ -5,3 +5,5 @@ export * from './runtime-world-state.js';
 export * from './protocol.js';
 export * from './recorded-session.js';
 export * from './audio-library.js';
+export * from './semantic-audio.js';
+export * from './scene-graph.js';

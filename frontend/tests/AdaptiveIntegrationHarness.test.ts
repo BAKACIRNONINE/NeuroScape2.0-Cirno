@@ -59,8 +59,12 @@ describe('Phase 1 adaptive end-to-end harness', () => {
     expect(
       recording?.adaptiveTrace.some((entry) => entry.kind === 'decision-2'),
     ).toBe(true);
-    expect(recording?.decisionEvents?.some((event) => event.type === 'decision-1')).toBe(true);
-    expect(recording?.decisionEvents?.some((event) => event.type === 'decision-2')).toBe(true);
+    expect(
+      recording?.decisionEvents?.some((event) => event.type === 'decision-1'),
+    ).toBe(true);
+    expect(
+      recording?.decisionEvents?.some((event) => event.type === 'decision-2'),
+    ).toBe(true);
     expect(recording?.eegMetrics).toHaveLength(60);
     expect(
       recording?.adaptiveTrace.some((entry) => entry.kind === 'plan-applied'),
@@ -139,9 +143,9 @@ describe('Phase 1 adaptive end-to-end harness', () => {
     const recording = recordingStore.stop();
     expect(recording?.sceneJourneyPlans).toHaveLength(1);
     expect(recording?.sceneJourneyPlans[0]?.value.planningHorizonSec).toBe(600);
-    expect(
-      recording?.sceneJourneyPlans[0]?.value.soundscape.event.length,
-    ).toBe(0);
+    expect(recording?.sceneJourneyPlans[0]?.value.soundscape.event.length).toBe(
+      0,
+    );
     expect(recording?.eegMetrics?.length).toBeGreaterThan(0);
     expect(
       recording?.adaptiveTrace.some(

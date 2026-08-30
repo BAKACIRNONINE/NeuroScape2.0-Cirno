@@ -1,0 +1,44 @@
+{
+  "participant_id": "P001",
+  "session_id": "mock-calibration-profile-001",
+  "sampling_rate_hz": 256,
+  "feature_version": "raw_welch_frontal_log_tbr_guided_baseline_protocol_v5",
+  "baseline_log_tbr": 1.27,
+  "baseline_mad": 0.08,
+  "baseline_scale": 0.118608,
+  "effective_baseline_scale": 0.118608,
+  "expected_epoch_count": 30,
+  "valid_epoch_count": 28,
+  "invalid_epoch_count": 2,
+  "baseline_available": true,
+  "collection_decision": "ready_to_continue",
+  "ready_to_continue": true,
+  "quality_status": "pass",
+  "quality_issues": [],
+  "self_reported_focus": 5,
+  "self_reported_drowsiness": 2,
+  "selected_baseline_id": "baseline-guided-v5",
+  "blocks": [],
+  "acclimation_attempts": [],
+  "quality": {
+    "status": "valid_collection",
+    "collection_decision": "ready_to_continue",
+    "quality_issues": [],
+    "packet_completeness": 0.96,
+    "valid_frontal_fraction": 0.95,
+    "researcher_quality_override": false,
+    "peak_to_peak_threshold_uv": 150.0,
+    "baseline_policy": {
+      "duration_seconds": 300,
+      "expected_epochs": 30,
+      "minimum_valid_epochs": 25,
+      "maximum_redos": 1,
+      "aggregation": "valid_epoch_median"
+    },
+    "baseline_summary": {
+      "baseline_log_tbr": 1.27,
+      "baseline_mad": 0.08,
+      "baseline_scale": 0.118608
+    }
+  }
+}
