@@ -3,10 +3,7 @@ import { JourneyController } from '../../src/controllers/JourneyController.js';
 import { RuntimeEventBus } from '../../src/events/RuntimeEvents.js';
 import { SceneGraph } from '../../src/scene-graph/SceneGraph.js';
 import { SemanticLocationMapper } from '../../src/scene-graph/SemanticLocationMapper.js';
-import {
-  sceneGraphDefinitionFixture,
-  sceneJourneyPlanFixture,
-} from '../fixtures/phase1Fixtures.js';
+import { sceneGraphDefinitionFixture, sceneJourneyPlanFixture } from '../fixtures/phase1Fixtures.js';
 
 function createJourney(events = new RuntimeEventBus()) {
   return new JourneyController(
@@ -24,8 +21,7 @@ describe('JourneyController', () => {
 
     const direct = oneStep.update(5_000);
     let subdivided = manySteps.getListenerState();
-    for (let index = 0; index < 50; index += 1)
-      subdivided = manySteps.update(100);
+    for (let index = 0; index < 50; index += 1) subdivided = manySteps.update(100);
 
     expect(subdivided.worldPosition).toEqual(direct.worldPosition);
     expect(subdivided.velocity).toEqual(direct.velocity);
@@ -57,12 +53,8 @@ describe('JourneyController', () => {
     const journey = createJourney(events);
     journey.initialize(sceneJourneyPlanFixture);
     journey.update(10_000);
-    expect(
-      events.history.some((event) => event.type === 'WaypointReached'),
-    ).toBe(true);
-    expect(
-      events.history.some((event) => event.type === 'SemanticLocationChanged'),
-    ).toBe(true);
+    expect(events.history.some((event) => event.type === 'WaypointReached')).toBe(true);
+    expect(events.history.some((event) => event.type === 'SemanticLocationChanged')).toBe(true);
     expect(journey.getListenerState().semanticLocation).toBe('clearing');
   });
 
@@ -72,16 +64,34 @@ describe('JourneyController', () => {
     const before = journey.update(4_000).worldPosition;
     journey.replacePlan({
       ...sceneJourneyPlanFixture,
-      userJourney: {
-        goal: 'return',
-        waypoints: [{ locationId: 'forest_entry' }],
-      },
+      userJourney: { goal: 'return', waypoints: [{ locationId: 'forest_entry' }] },
     });
     expect(journey.update(0).worldPosition).toEqual(before);
   });
 
+  it('preserves authored future arrival times when replacing a plan', () => {
+    const journey = createJourney();
+    journey.initialize(sceneJourneyPlanFixture);
+    journey.update(1_000);
+    journey.replacePlan({
+      ...sceneJourneyPlanFixture,
+      userJourney: {
+        goal: 'authored transition',
+        waypoints: [
+          { locationId: 'forest_entry' },
+          { locationId: 'clearing', arrivalTimeMs: 26_000 },
+        ],
+      },
+    });
+    journey.update(24_000);
+    expect(journey.getListenerState().semanticLocation).toBe('forest_entry');
+    journey.update(1_000);
+    expect(journey.getListenerState().semanticLocation).toBe('clearing');
+  });
+
   it('preserves absolute replacement arrival time and commits semantic location only on arrival', () => {
     const journey = createJourney();
+
     journey.initialize({
       ...sceneJourneyPlanFixture,
       userJourney: {
@@ -89,6 +99,7 @@ describe('JourneyController', () => {
         waypoints: [{ locationId: 'forest_entry', arrivalTimeMs: 0 }],
       },
     });
+
     journey.replacePlan({
       ...sceneJourneyPlanFixture,
       userJourney: {
@@ -99,7 +110,9 @@ describe('JourneyController', () => {
         ],
       },
     });
+
     expect(journey.update(4_999).semanticLocation).toBe('forest_entry');
+
     const arrived = journey.update(1);
     expect(arrived.semanticLocation).toBe('clearing');
     expect(arrived.worldPosition).toEqual([0, 0, -6]);
