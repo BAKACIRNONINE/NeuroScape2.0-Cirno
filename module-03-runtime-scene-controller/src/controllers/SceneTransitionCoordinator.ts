@@ -5,6 +5,7 @@ import type {
 import { EPSILON, vectorLength } from '../core/math.js';
 import type {
   RuntimeEventBus,
+  SceneTransitionFailureReason,
   SceneTransitionPhase,
 } from '../events/RuntimeEvents.js';
 
@@ -143,7 +144,39 @@ export class SceneTransitionCoordinator {
     };
   }
 
-  /** Discard stale transition coordination after plan rollback/replacement. */
+  /** Record a failed transition and restore runtime coordination to its origin. */
+  rollback(reason: SceneTransitionFailureReason): void {
+    const state = this.#state;
+
+    if (!state || state.phase === 'complete') {
+      this.#state = undefined;
+      return;
+    }
+
+    this.events.emit({
+      type: 'SceneTransitionFailed',
+      timestampMs: this.#timestampMs,
+      transitionId: state.transitionId,
+      fromLocationId: state.fromLocationId,
+      toLocationId: state.toLocationId,
+      phase: state.phase,
+      reason,
+    });
+
+    this.events.emit({
+      type: 'SceneTransitionRolledBack',
+      timestampMs: this.#timestampMs,
+      transitionId: state.transitionId,
+      fromLocationId: state.fromLocationId,
+      toLocationId: state.toLocationId,
+      restoredLocationId: state.fromLocationId,
+      reason,
+    });
+
+    this.#state = undefined;
+  }
+
+  /** Silently discard stale coordination when no rollback semantics are needed. */
   cancel(): void {
     this.#state = undefined;
   }

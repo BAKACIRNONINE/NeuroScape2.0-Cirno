@@ -147,7 +147,7 @@ export class RuntimeController {
         activeTransition.phase !== 'complete' &&
         activeTransition.toLocationId !== currentListener.semanticLocation
       )
-        this.#sceneTransitions.cancel();
+        this.#sceneTransitions.rollback('plan-replaced-before-arrival');
     }
 
     this.#journey.replacePlan(validatedPlan);

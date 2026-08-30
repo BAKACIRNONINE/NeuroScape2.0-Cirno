@@ -4,6 +4,11 @@ export type SceneTransitionPhase =
   | 'stabilizing'
   | 'complete';
 
+export type SceneTransitionFailureReason =
+  | 'plan-replaced-before-arrival'
+  | 'runtime-timeout'
+  | 'audio-start-failed';
+
 export type RuntimeEvent =
   | { type: 'JourneyStarted'; timestampMs: number; planId: string }
   | { type: 'WaypointReached'; timestampMs: number; waypointIndex: number; locationId: string }
@@ -37,6 +42,24 @@ export type RuntimeEvent =
       toLocationId: string;
       arrivalTimeMs: number;
       completedAtMs: number;
+    }
+  | {
+      type: 'SceneTransitionFailed';
+      timestampMs: number;
+      transitionId: string;
+      fromLocationId: string;
+      toLocationId: string;
+      phase: SceneTransitionPhase;
+      reason: SceneTransitionFailureReason;
+    }
+  | {
+      type: 'SceneTransitionRolledBack';
+      timestampMs: number;
+      transitionId: string;
+      fromLocationId: string;
+      toLocationId: string;
+      restoredLocationId: string;
+      reason: SceneTransitionFailureReason;
     }
   | { type: 'EventSpawned'; timestampMs: number; eventId: string }
   | { type: 'EventFinished'; timestampMs: number; eventId: string }

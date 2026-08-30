@@ -180,4 +180,44 @@ describe('RuntimeController Phase 2 integration', () => {
     controller.shutdown();
     expect(controller.currentState).toBeUndefined();
   });
+
+  it('emits rollback lifecycle when an active scene transition is abandoned', () => {
+    const { controller, events } = createRuntimeHarness();
+
+    controller.initialize(sceneJourneyPlanFixture);
+    controller.update(1_000);
+
+    controller.applyPlan({
+      ...sceneJourneyPlanFixture,
+      planId: 'transition-before-rollback',
+      userJourney: {
+        goal: 'move to clearing',
+        waypoints: [
+          { locationId: 'forest_entry' },
+          { locationId: 'clearing', arrivalTimeMs: 26_000 },
+        ],
+      },
+    });
+
+    controller.applyPlan({
+      ...sceneJourneyPlanFixture,
+      planId: 'rollback-to-origin',
+      userJourney: {
+        goal: 'restore origin',
+        waypoints: [{ locationId: 'forest_entry', arrivalTimeMs: 0 }],
+      },
+    });
+
+    expect(
+      events.history.some((event) => event.type === 'SceneTransitionFailed'),
+    ).toBe(true);
+
+    expect(
+      events.history.some((event) => event.type === 'SceneTransitionRolledBack'),
+    ).toBe(true);
+
+    expect(controller.currentState!.listener.semanticLocation).toBe(
+      'forest_entry',
+    );
+  });
 });
