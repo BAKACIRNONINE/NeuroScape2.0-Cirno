@@ -13,3 +13,4 @@ export * from './controllers/AmbientController.js';
 export * from './controllers/ActionController.js';
 export * from './controllers/EventController.js';
 export * from './controllers/TransitionController.js';
+export * from './controllers/SceneTransitionCoordinator.js';
