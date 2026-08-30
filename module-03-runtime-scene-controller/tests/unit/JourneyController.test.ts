@@ -68,4 +68,24 @@ describe('JourneyController', () => {
     });
     expect(journey.update(0).worldPosition).toEqual(before);
   });
+
+  it('preserves authored future arrival times when replacing a plan', () => {
+    const journey = createJourney();
+    journey.initialize(sceneJourneyPlanFixture);
+    journey.update(1_000);
+    journey.replacePlan({
+      ...sceneJourneyPlanFixture,
+      userJourney: {
+        goal: 'authored transition',
+        waypoints: [
+          { locationId: 'forest_entry' },
+          { locationId: 'clearing', arrivalTimeMs: 26_000 },
+        ],
+      },
+    });
+    journey.update(24_000);
+    expect(journey.getListenerState().semanticLocation).toBe('forest_entry');
+    journey.update(1_000);
+    expect(journey.getListenerState().semanticLocation).toBe('clearing');
+  });
 });

@@ -17,7 +17,6 @@ import {
   smoothstepDerivative,
   subtractVector,
   vectorLength,
-  vectorsEqual,
 } from '../core/math.js';
 
 interface ResolvedWaypoint {
@@ -58,32 +57,65 @@ export class JourneyController {
 
   replacePlan(plan: SceneJourneyPlan): void {
     const listener = this.requireListener();
-    const planned = plan.userJourney.waypoints.map((waypoint) => ({
+    const authoredFutureExists = plan.userJourney.waypoints.some(
+      (waypoint) =>
+        waypoint.arrivalTimeMs !== undefined &&
+        waypoint.arrivalTimeMs > this.#timestampMs,
+    );
+    const relevantWaypoints = authoredFutureExists
+      ? plan.userJourney.waypoints.filter(
+          (waypoint, index, all) =>
+            index === all.length - 1 ||
+            (waypoint.arrivalTimeMs !== undefined &&
+              waypoint.arrivalTimeMs > this.#timestampMs),
+        )
+      : plan.userJourney.waypoints;
+    const planned = relevantWaypoints.map((waypoint) => ({
       locationId: waypoint.locationId,
       position: this.locationMapper.resolve(waypoint.locationId),
       pauseDurationMs: waypoint.pauseDurationMs ?? 0,
+      arrivalTimeMs: waypoint.arrivalTimeMs,
     }));
-    const first = planned[0];
-    const needsCurrentAnchor =
-      !first ||
-      first.locationId !== listener.semanticLocation ||
-      !vectorsEqual(first.position, listener.worldPosition);
-    const anchors = needsCurrentAnchor
-      ? [
-          {
-            locationId: listener.semanticLocation,
-            position: [...listener.worldPosition] as Vector3,
-            pauseDurationMs: 0,
-          },
-          ...planned,
-        ]
-      : planned;
+    // Runtime position is authoritative at a plan-merge boundary. Historical
+    // journey waypoints must never pull the listener backwards through an old
+    // path, and the current semantic node does not need a duplicate waypoint.
+    const firstPlanned = planned[0];
+    const future =
+      firstPlanned?.locationId === listener.semanticLocation &&
+      (firstPlanned.arrivalTimeMs === undefined ||
+        firstPlanned.arrivalTimeMs <= this.#timestampMs)
+        ? planned.slice(1)
+        : planned;
+    const anchors = [
+      {
+        locationId: listener.semanticLocation,
+        position: [...listener.worldPosition] as Vector3,
+        pauseDurationMs: 0,
+        arrivalTimeMs: this.#timestampMs,
+      },
+      ...future,
+    ];
     const segmentDurationMs =
       anchors.length > 1 ? (plan.planningHorizonSec * 1000) / (anchors.length - 1) : 0;
-    this.#waypoints = anchors.map((waypoint, index) => ({
-      ...waypoint,
-      arrivalTimeMs: this.#timestampMs + index * segmentDurationMs,
-    }));
+    let previousArrival = this.#timestampMs;
+    let previousPause = 0;
+    this.#waypoints = anchors.map((waypoint, index) => {
+      const earliestArrival =
+        index === 0
+          ? this.#timestampMs
+          : previousArrival + previousPause + 1;
+      const fallbackArrival = this.#timestampMs + index * segmentDurationMs;
+      const arrivalTimeMs =
+        index === 0
+          ? this.#timestampMs
+          : Math.max(
+              earliestArrival,
+              waypoint.arrivalTimeMs ?? fallbackArrival,
+            );
+      previousArrival = arrivalTimeMs;
+      previousPause = waypoint.pauseDurationMs;
+      return { ...waypoint, arrivalTimeMs };
+    });
     this.#lastReachedIndex = 0;
     this.#currentSegmentIndex = anchors.length > 1 ? 0 : -1;
     this.#listener = { ...listener, velocity: [0, 0, 0] };

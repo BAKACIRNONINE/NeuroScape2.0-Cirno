@@ -1,3 +1,9 @@
+export type SceneTransitionPhase =
+  | 'traversing'
+  | 'arriving'
+  | 'stabilizing'
+  | 'complete';
+
 export type RuntimeEvent =
   | { type: 'JourneyStarted'; timestampMs: number; planId: string }
   | { type: 'WaypointReached'; timestampMs: number; waypointIndex: number; locationId: string }
@@ -6,6 +12,31 @@ export type RuntimeEvent =
       timestampMs: number;
       previousLocationId: string;
       locationId: string;
+    }
+  | {
+      type: 'SceneTransitionStarted';
+      timestampMs: number;
+      transitionId: string;
+      fromLocationId: string;
+      toLocationId: string;
+      arrivalTimeMs: number;
+    }
+  | {
+      type: 'SceneTransitionPhaseChanged';
+      timestampMs: number;
+      transitionId: string;
+      fromLocationId: string;
+      toLocationId: string;
+      phase: SceneTransitionPhase;
+    }
+  | {
+      type: 'SceneTransitionCompleted';
+      timestampMs: number;
+      transitionId: string;
+      fromLocationId: string;
+      toLocationId: string;
+      arrivalTimeMs: number;
+      completedAtMs: number;
     }
   | { type: 'EventSpawned'; timestampMs: number; eventId: string }
   | { type: 'EventFinished'; timestampMs: number; eventId: string }
