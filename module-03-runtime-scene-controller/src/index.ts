@@ -2,6 +2,7 @@ export * from './core/RuntimeController.js';
 export * from './core/RuntimeWorldStateBuilder.js';
 export * from './scene-graph/SceneGraph.js';
 export * from './scene-graph/SceneGraphLoader.js';
+export * from './scene-graph/SemanticSceneGraphAdapter.js';
 export * from './scene-graph/SemanticLocationMapper.js';
 export * from './validation/PlanValidator.js';
 export * from './logging/index.js';

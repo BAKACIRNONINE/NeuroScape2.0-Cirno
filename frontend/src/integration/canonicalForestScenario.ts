@@ -1,21 +1,67 @@
-import type { NeuroState, SceneJourneyPlan } from '@neuroscape/contracts';
-import type { SceneGraphDefinition } from '@neuroscape/runtime-scene-controller';
+import {
+  sceneGraph,
+  type NeuroState,
+  type SceneJourneyPlan,
+} from '@neuroscape/contracts';
+import {
+  projectSemanticSceneGraph,
+  type RuntimeSceneLayout,
+  type SceneGraphDefinition,
+} from '@neuroscape/runtime-scene-controller';
+
+const canonicalForestLayout = {
+  forest_clearing: [0, 0, -7],
+  dense_forest: [-5, 0, -12],
+  stream_bank: [2, 0, -14],
+  waterfall_vicinity: [7, 1, -20],
+  lakeside_river: [-3, 0, -20],
+  forest_edge: [6, 0, -10],
+  city_park: [12, 0, -10],
+  beach_shore: [12, 0, -18],
+} satisfies RuntimeSceneLayout;
+
+const canonicalForestGraph = projectSemanticSceneGraph({
+  semanticGraph: sceneGraph,
+  layout: canonicalForestLayout,
+
+  // Temporary compatibility bridge for legacy Module 03 fixtures.
+  extensions: {
+    stream_bank: {
+      neighbors: ['clearing', 'waterfall'],
+      ambientAssetIds: ['ambient.stream.near'],
+      eventAssetIds: ['event.bird-pass'],
+    },
+  },
+});
 
 /** Deterministic development fixtures. These values simulate upstream Modules 01 and 02. */
-export const forestSceneGraph: SceneGraphDefinition = { nodes: [
-  { id: 'forest_entry', worldPosition: [0, 0, 0], neighbors: ['clearing'], ambientAssetIds: ['ambient.forest.light', 'ambient.forest.wind'], eventAssetIds: ['event.leaves'] },
-  { id: 'clearing', worldPosition: [0, 0, -7], neighbors: ['forest_entry', 'stream_bank'], ambientAssetIds: ['ambient.forest.light', 'ambient.forest.wind'], eventAssetIds: ['event.bird-pass'] },
-  { id: 'stream_bank', worldPosition: [2, 0, -14], neighbors: ['clearing', 'waterfall', 'forest_clearing', 'waterfall_vicinity', 'lakeside_river'], ambientAssetIds: ['ambient.stream.near', 'stream_lakeside_river'], eventAssetIds: ['event.bird-pass', 'forest_water_drop_far_01'] },
-  { id: 'waterfall', worldPosition: [7, 1, -20], neighbors: ['stream_bank'], ambientAssetIds: ['ambient.waterfall'], eventAssetIds: ['event.leaves'] },
-  // Canonical semantic-journey v1 nodes; legacy nodes above remain for Module 03 fixtures.
-  { id: 'forest_clearing', worldPosition: [0, 0, -7], neighbors: ['dense_forest', 'stream_bank', 'forest_edge'], ambientAssetIds: ['forest_ambient_bed_01', 'forest_wind_leaves_01'], eventAssetIds: ['forest_bird_far_01', 'forest_bird_far_02', 'forest_leaf_rustle_mid_01'] },
-  { id: 'dense_forest', worldPosition: [-5, 0, -12], neighbors: ['forest_clearing'], ambientAssetIds: ['forest_ambient_bed_02', 'forest_wind_leaves_01'], eventAssetIds: ['forest_soft_owl_far_01', 'forest_insect_chirp_far_01'] },
-  { id: 'waterfall_vicinity', worldPosition: [7, 1, -20], neighbors: ['stream_bank'], ambientAssetIds: ['forest_ambient_bed_01'], eventAssetIds: ['forest_water_drop_far_01'] },
-  { id: 'lakeside_river', worldPosition: [-3, 0, -20], neighbors: ['stream_bank'], ambientAssetIds: ['stream_lakeside_river'], eventAssetIds: ['forest_bird_far_01'] },
-  { id: 'forest_edge', worldPosition: [6, 0, -10], neighbors: ['forest_clearing', 'city_park', 'beach_shore'], ambientAssetIds: ['forest_ambient_bed_01', 'forest_wind_leaves_01'], eventAssetIds: ['forest_bird_far_01'] },
-  { id: 'city_park', worldPosition: [12, 0, -10], neighbors: ['forest_edge'], ambientAssetIds: ['citypark_light_street_ambience'], eventAssetIds: ['citypark_dog'] },
-  { id: 'beach_shore', worldPosition: [12, 0, -18], neighbors: ['forest_edge'], ambientAssetIds: ['ocean_waves_soft_01', 'ocean_sea_breeze_01'], eventAssetIds: ['ocean_seagull_far_01', 'ocean_shorebird_far_01'] },
-] };
+export const forestSceneGraph: SceneGraphDefinition = {
+  nodes: [
+    {
+      id: 'forest_entry',
+      worldPosition: [0, 0, 0],
+      neighbors: ['clearing'],
+      ambientAssetIds: ['ambient.forest.light', 'ambient.forest.wind'],
+      eventAssetIds: ['event.leaves'],
+    },
+    {
+      id: 'clearing',
+      worldPosition: [0, 0, -7],
+      neighbors: ['forest_entry', 'stream_bank'],
+      ambientAssetIds: ['ambient.forest.light', 'ambient.forest.wind'],
+      eventAssetIds: ['event.bird-pass'],
+    },
+    {
+      id: 'waterfall',
+      worldPosition: [7, 1, -20],
+      neighbors: ['stream_bank'],
+      ambientAssetIds: ['ambient.waterfall'],
+      eventAssetIds: ['event.leaves'],
+    },
+
+    ...canonicalForestGraph.nodes,
+  ],
+};
 
 const ambience = (localizedId: 'ambient.stream.near' | 'ambient.waterfall', locationId: 'stream_bank' | 'waterfall') => [
   { id: 'forest-bed', assetId: 'ambient.forest.light', mode: 'global' as const, gain: .42, active: true },
